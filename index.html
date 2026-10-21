@@ -83,6 +83,8 @@
 </main>
 
 <script>
+// never render inside our own map frame (prevents a page nested in itself)
+if (window.top !== window.self) { document.body.textContent = ""; throw new Error("nested"); }
 // ---- settings: change these two lines ----
 const MAP_URL = "http://mc.vestalis.xyz:25971/#world";
 const MAP_EMBED = "/map/#world";   // same map, served through this site over https
