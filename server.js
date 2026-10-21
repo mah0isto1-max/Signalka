@@ -54,6 +54,8 @@ const server = http.createServer((req, res) => {
         res.writeHead(400);
         return res.end("bad json");
       }
+      // old CC versions send {} instead of [] when the radar sees nobody
+      if (list == null || (typeof list === "object" && !Array.isArray(list) && !Object.keys(list).length)) list = [];
       if (!Array.isArray(list)) {
         res.writeHead(400);
         return res.end("bad data");
