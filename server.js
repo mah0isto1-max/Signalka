@@ -128,6 +128,12 @@ const server = http.createServer((req, res) => {
       (up) => {
         const out = { ...up.headers };
         for (const h of ["connection", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie"]) delete out[h];
+        // keep redirects inside /map/ instead of leaking to the site root
+        if (out.location) {
+          let loc = out.location;
+          if (loc.startsWith(MAP_ORIGIN)) loc = loc.slice(MAP_ORIGIN.length) || "/";
+          if (loc.startsWith("/") && !loc.startsWith("//")) out.location = "/map" + loc;
+        }
         res.writeHead(up.statusCode, out);
         up.pipe(res);
       }
