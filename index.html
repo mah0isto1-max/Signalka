@@ -122,7 +122,7 @@ function render() {
     row.tabIndex = 0;
     const img = document.createElement("img");
     img.alt = "";
-    img.src = p.name ? `https://minotar.net/helm/${encodeURIComponent(p.name)}/40.png` : "";
+    if (p.name) img.src = `https://minotar.net/helm/${encodeURIComponent(p.name)}/40.png`;
     img.onerror = () => { img.removeAttribute("src"); };
     const box = document.createElement("div");
     const b = document.createElement("b");
