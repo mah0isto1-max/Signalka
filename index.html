@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Радар базы</title>
+<style>
+  :root {
+    --bg: #eef1ea; --panel: #fbfcf8; --ink: #1d2a24; --muted: #5d6b63;
+    --line: #cfd6c8; --alert: #c4321f; --ok: #2f7d4f; --accent: #1f5f8b;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141a17; --panel: #1b2420; --ink: #e4ebe5; --muted: #93a398;
+      --line: #2f3b34; --alert: #ff6b55; --ok: #5fc58a; --accent: #6db7e8;
+      color-scheme: dark;
+    }
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    background: var(--bg); color: var(--ink);
+    font: 15px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
+    display: grid; grid-template-columns: 340px 1fr; grid-template-rows: auto 1fr;
+  }
+  header {
+    grid-column: 1 / 3; display: flex; align-items: center; gap: 12px;
+    padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+  }
+  h1 { font-size: 17px; margin: 0; font-weight: 650; }
+  #status { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+  #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  #dot.on { background: var(--ok); }
+  aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  #list { overflow: auto; flex: 1; }
+  .empty { padding: 20px 16px; color: var(--muted); }
+  .p {
+    display: grid; grid-template-columns: 40px 1fr; gap: 10px; padding: 10px 16px;
+    border-bottom: 1px solid var(--line); cursor: pointer; align-items: center;
+  }
+  .p:hover, .p:focus-visible { background: color-mix(in srgb, var(--accent) 10%, transparent); outline: none; }
+  .p.sel { box-shadow: inset 4px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .p img { width: 40px; height: 40px; image-rendering: pixelated; border-radius: 4px; background: var(--line); }
+  .p b { display: block; }
+  .p.bad b { color: var(--alert); }
+  .p small { color: var(--muted); }
+  main { display: grid; grid-template-rows: 1fr 240px; min-height: 0; min-width: 0; }
+  #mapwrap { position: relative; min-height: 0; border-bottom: 1px solid var(--line); }
+  iframe { width: 100%; height: 100%; border: 0; background: var(--line); }
+  #tools { position: absolute; right: 10px; top: 10px; display: flex; gap: 8px; }
+  #tools label, #tools a {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 5px 10px; font-size: 13px; color: var(--ink); text-decoration: none;
+  }
+  #radar { width: 100%; height: 100%; display: block; background: var(--panel); }
+  @media (max-width: 800px) {
+    body { grid-template-columns: 1fr; grid-template-rows: auto 220px 1fr; }
+    header { grid-column: 1; }
+    aside { border-right: 0; border-bottom: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Радар базы</h1>
+  <div id="status"><span id="dot"></span><span id="stxt">Подключение…</span></div>
+</header>
+
+<aside>
+  <div id="list"><div class="empty">Ждём данные от радара…</div></div>
+</aside>
+
+<main>
+  <div id="mapwrap">
+    <iframe id="map" title="3D-карта сервера" allowfullscreen></iframe>
+    <div id="tools">
+      <label><input type="checkbox" id="follow" checked> Камера следует за игроком</label>
+      <a id="open" href="#" target="_blank" rel="noopener">Открыть карту</a>
+    </div>
+  </div>
+  <canvas id="radar"></canvas>
+</main>
+
+<script>
+// ---- settings: change these two lines ----
+const MAP_URL = "http://mc.vestalis.xyz:25971/#world";
+const CAM_DIST = 150;
+// ------------------------------------------
+
+const $ = (id) => document.getElementById(id);
+let state = { players: [], online: false };
+let selected = null;
+let lastFrame = 0, lastKey = "";
+
+function mapLink(p) {
+  return `${MAP_URL}:${Math.floor(p.x)}:${Math.floor(p.y)}:${Math.floor(p.z)}:${CAM_DIST}:0:0:0:0:perspective`;
+}
+
+function render() {
+  const dot = $("dot"), stxt = $("stxt");
+  dot.className = state.online ? "on" : "";
+  stxt.textContent = state.online ? "Радар на связи" : "Нет связи с компьютером";
+
+  const list = $("list");
+  list.textContent = "";
+  const ps = state.players.slice().sort((a, b) => a.friend - b.friend);
+  if (!ps.length) {
+    const d = document.createElement("div");
+    d.className = "empty";
+    d.textContent = state.online ? "В зоне радара никого нет." : "Ждём данные от радара…";
+    list.appendChild(d);
+  }
+  if (selected && !ps.find((p) => p.id === selected)) selected = null;
+  if (!selected) {
+    const bad = ps.find((p) => !p.friend) || ps[0];
+    if (bad) selected = bad.id;
+  }
+  for (const p of ps) {
+    const row = document.createElement("div");
+    row.className = "p" + (p.friend ? "" : " bad") + (p.id === selected ? " sel" : "");
+    row.tabIndex = 0;
+    const img = document.createElement("img");
+    img.alt = "";
+    img.src = p.name ? `https://minotar.net/helm/${encodeURIComponent(p.name)}/40.png` : "";
+    img.onerror = () => { img.removeAttribute("src"); };
+    const box = document.createElement("div");
+    const b = document.createElement("b");
+    b.textContent = p.friend ? p.name : "Чужой";
+    const s = document.createElement("small");
+    s.textContent = `x ${Math.floor(p.x)}  y ${Math.floor(p.y)}  z ${Math.floor(p.z)}` + (p.friend ? "" : `  ·  ${p.id.slice(0, 8)}`);
+    box.append(b, s);
+    row.append(img, box);
+    const pick = () => { selected = p.id; lastKey = ""; render(); };
+    row.onclick = pick;
+    row.onkeydown = (e) => { if (e.key === "Enter") pick(); };
+    list.appendChild(row);
+  }
+
+  // camera follows selected player (reload at most every 6 s, only if moved)
+  const sel = ps.find((p) => p.id === selected);
+  if (sel) {
+    $("open").href = mapLink(sel);
+    const key = [selected, Math.floor(sel.x / 8), Math.floor(sel.z / 8)].join();
+    if ($("follow").checked && key !== lastKey && Date.now() - lastFrame > 6000) {
+      $("map").src = mapLink(sel);
+      lastKey = key;
+      lastFrame = Date.now();
+    }
+  } else {
+    $("open").href = MAP_URL;
+    if (!$("map").src) $("map").src = MAP_URL;
+  }
+  drawRadar(ps);
+}
+
+function drawRadar(ps) {
+  const c = $("radar");
+  const dpr = window.devicePixelRatio || 1;
+  const w = c.clientWidth, h = c.clientHeight;
+  c.width = w * dpr; c.height = h * dpr;
+  const g = c.getContext("2d");
+  g.scale(dpr, dpr);
+  const css = getComputedStyle(document.documentElement);
+  const col = (n) => css.getPropertyValue(n).trim();
+  g.clearRect(0, 0, w, h);
+  if (!ps.length) return;
+
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const p of ps) {
+    for (const t of [...p.trail, p]) {
+      minX = Math.min(minX, t.x); maxX = Math.max(maxX, t.x);
+      minZ = Math.min(minZ, t.z); maxZ = Math.max(maxZ, t.z);
+    }
+  }
+  const pad = 40;
+  const span = Math.max(maxX - minX, maxZ - minZ, 40);
+  const sc = (Math.min(w, h) - pad * 2) / span;
+  const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+  const X = (x) => w / 2 + (x - cx) * sc;
+  const Z = (z) => h / 2 + (z - cz) * sc;   // north (−z) is up
+
+  g.strokeStyle = col("--line"); g.lineWidth = 1;
+  for (let i = 1; i < 4; i++) {
+    g.beginPath(); g.moveTo(0, (h / 4) * i); g.lineTo(w, (h / 4) * i); g.stroke();
+    g.beginPath(); g.moveTo((w / 4) * i, 0); g.lineTo((w / 4) * i, h); g.stroke();
+  }
+  g.fillStyle = col("--muted"); g.font = "12px system-ui, sans-serif";
+  g.fillText("С", w - 18, 16);
+  g.fillText(`сетка ≈ ${Math.round(w / 4 / sc)} блоков`, 10, h - 10);
+
+  for (const p of ps) {
+    const color = p.friend ? col("--ok") : col("--alert");
+    g.strokeStyle = color; g.lineWidth = 2;
+    g.beginPath();
+    p.trail.forEach((t, i) => (i ? g.lineTo(X(t.x), Z(t.z)) : g.moveTo(X(t.x), Z(t.z))));
+    g.stroke();
+    g.fillStyle = color;
+    g.beginPath(); g.arc(X(p.x), Z(p.z), p.id === selected ? 8 : 6, 0, 7); g.fill();
+    g.fillStyle = col("--ink"); g.font = "13px system-ui, sans-serif";
+    g.fillText(p.friend ? p.name : "Чужой " + p.id.slice(0, 4), X(p.x) + 12, Z(p.z) + 4);
+  }
+}
+
+function connect() {
+  const es = new EventSource("/api/stream");
+  es.onmessage = (e) => { state = JSON.parse(e.data); render(); };
+  es.onerror = () => { state.online = false; render(); };
+}
+window.addEventListener("resize", () => drawRadar(state.players));
+$("follow").addEventListener("change", () => { lastKey = ""; render(); });
+$("map").src = MAP_URL;
+connect();
+</script>
+</body>
+</html>
