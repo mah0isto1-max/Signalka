@@ -6,6 +6,7 @@ const path = require("path");
 
 const KEY = process.env.KEY || "change-me";
 const PORT = process.env.PORT || 3000;
+const MAP_ORIGIN = process.env.MAP_ORIGIN || "http://mc.vestalis.xyz:25971";
 const STALE_MS = 10000;
 const TRAIL = 40;
 
@@ -99,6 +100,42 @@ const server = http.createServer((req, res) => {
     clients.add(res);
     req.on("close", () => clients.delete(res));
     return;
+  }
+
+  // map proxy: /map/... -> MAP_ORIGIN/... (lets an http map load inside an https page)
+  if (url.pathname === "/map") {
+    res.writeHead(301, { Location: "/map/" });
+    return res.end();
+  }
+  if (url.pathname.startsWith("/map/")) {
+    const target = new URL(MAP_ORIGIN);
+    const headers = {};
+    for (const h of ["accept", "accept-encoding", "accept-language", "range", "if-none-match", "if-modified-since"]) {
+      if (req.headers[h]) headers[h] = req.headers[h];
+    }
+    headers.host = target.host;
+    const upstream = http.request(
+      {
+        hostname: target.hostname,
+        port: target.port || 80,
+        path: url.pathname.slice(4) + url.search,
+        method: "GET",
+        headers,
+        timeout: 20000,
+      },
+      (up) => {
+        const out = { ...up.headers };
+        for (const h of ["connection", "transfer-encoding", "x-frame-options", "content-security-policy", "set-cookie"]) delete out[h];
+        res.writeHead(up.statusCode, out);
+        up.pipe(res);
+      }
+    );
+    upstream.on("timeout", () => upstream.destroy());
+    upstream.on("error", () => {
+      if (!res.headersSent) res.writeHead(502);
+      res.end("map unavailable");
+    });
+    return upstream.end();
   }
 
   if (url.pathname === "/" || url.pathname === "/index.html") {
