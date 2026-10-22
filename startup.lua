@@ -1,229 +1,229 @@
-// Guard site: receives radar data from ComputerCraft, shows it live.
-// No dependencies. Env: KEY (secret, required), PORT (set by host).
-const http = require("http");
-const fs = require("fs");
-const path = require("path");
+local FILE = "guard_data"
+local RECENT = 15
+local MAP_URL = "http://mc.vestalis.xyz:25971/#world"
+local CAM_DIST = 150
+local SEND_EVERY = 0.5
+local data = { webhook = "", friends = {}, cooldown = 15, site = "", key = "" }
 
-const KEY = process.env.KEY || "change-me";
-const PORT = process.env.PORT || 3000;
-const STALE_MS = 10000;
-const TRAIL = 40;
+local function save()
+  local f = fs.open(FILE, "w")
+  f.write(textutils.serialize(data))
+  f.close()
+end
 
-let players = {};      // id -> player
-let trails = {};       // id -> [{x,z}]
-let lastUpdate = 0;
-const clients = new Set();
+if fs.exists(FILE) then
+  local f = fs.open(FILE, "r")
+  local d = textutils.unserialize(f.readAll())
+  f.close()
+  if type(d) == "table" then
+    data.webhook = d.webhook or ""
+    data.friends = d.friends or {}
+    data.cooldown = d.cooldown or 15
+    data.site = d.site or ""
+    data.key = d.key or ""
+  end
+end
 
-function snapshot() {
-  const now = Date.now();
-  return {
-    updated: lastUpdate,
-    online: lastUpdate > 0 && now - lastUpdate < STALE_MS,
-    players: Object.values(players).map((p) => ({ ...p, trail: trails[p.id] || [] })),
-  };
-}
+local radar = peripheral.find("create_radar:radar_bearing")
+           or peripheral.find("create_radar:monitor")
+assert(radar, "Radar not found: place the computer next to the radar")
 
-function broadcast() {
-  const msg = "data: " + JSON.stringify(snapshot()) + "\n\n";
-  for (const res of clients) res.write(msg);
-}
+local seen = {}
+local function now() return os.epoch("utc") / 1000 end
 
-function readBody(req, cb) {
-  let data = "";
-  req.on("data", (c) => {
-    data += c;
-    if (data.length > 200000) req.destroy();
-  });
-  req.on("end", () => cb(data));
-}
+local function getPlayers()
+  local ok, tracks = pcall(radar.getTracks)
+  local res = {}
+  if ok and tracks then
+    for _, t in ipairs(tracks) do
+      if t.category == "PLAYER" then res[#res + 1] = t end
+    end
+  end
+  return res
+end
 
-const MAP_ORIGIN = new URL(process.env.MAP_ORIGIN || "http://mc.vestalis.xyz:25971");
+local function sendDiscord(text)
+  if data.webhook == "" then
+    print("Webhook not set")
+    return false
+  end
+  local body = textutils.serializeJSON({ content = text })
+  local ok, err = http.post(data.webhook, body, { ["Content-Type"] = "application/json" })
+  if ok then ok.close() return true end
+  print("Webhook error: " .. tostring(err))
+  return false
+end
 
-// Reverse proxy: serves the map from our own https origin so the page can
-// move the camera inside the iframe without reloading it.
-function proxyMap(req, res, upPath) {
-  const headers = { ...req.headers, host: MAP_ORIGIN.host };
-  delete headers.referer;
-  delete headers.origin;
-  const up = http.request(
-    { host: MAP_ORIGIN.hostname, port: MAP_ORIGIN.port || 80, method: req.method, path: upPath, headers },
-    (ur) => {
-      const h = { ...ur.headers };
-      delete h["x-frame-options"];
-      delete h["content-security-policy"];
-      if (h.location) {
-        try {
-          const l = new URL(h.location, MAP_ORIGIN);
-          if (l.host === MAP_ORIGIN.host) h.location = "/map" + l.pathname + l.search + l.hash;
-        } catch (e) {}
-      }
-      res.writeHead(ur.statusCode, h);
-      ur.pipe(res);
+local function mapLink(p)
+  return ("%s:%d:%d:%d:%d:0:0:0:0:perspective"):format(
+    MAP_URL, math.floor(p.x), math.floor(p.y), math.floor(p.z), CAM_DIST)
+end
+
+-- push radar data to the website
+local function pushSite()
+  if data.site == "" or data.key == "" then return false end
+  local list = {}
+  for _, t in ipairs(getPlayers()) do
+    list[#list + 1] = {
+      id = t.id,
+      name = data.friends[t.id] or "",
+      friend = data.friends[t.id] ~= nil,
+      x = t.position.x, y = t.position.y, z = t.position.z,
     }
-  );
-  up.setTimeout(30000, () => up.destroy(new Error("timeout")));
-  up.on("error", () => {
-    if (!res.headersSent) res.writeHead(502, { "Content-Type": "text/plain; charset=utf-8" });
-    res.end("Карта недоступна");
-  });
-  req.pipe(up);
-}
+  end
+  local url = data.site:gsub("/+$", "") .. "/api/update?key=" .. textutils.urlEncode(data.key)
+  local body = textutils.serializeJSON({ players = list })
+  local ok, err = http.post(url, body, { ["Content-Type"] = "application/json" })
+  if ok then ok.close() return true end
+  return false, err
+end
 
+local function siteLoop()
+  local failed = false
+  while true do
+    local ok, err = pushSite()
+    if ok == false and not failed then
+      print("Site error: " .. tostring(err))
+      failed = true
+    elseif ok then
+      failed = false
+    end
+    sleep(SEND_EVERY)
+  end
+end
 
-// ---- live markers: merge our players into BlueMap's markers.json ----
-function esc(t) {
-  return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-}
-const BANDIT_SVG =
-  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" shape-rendering="crispEdges">' +
-  '<rect width="8" height="8" fill="#c4906b"/><rect width="8" height="2" fill="#3a2a1f"/>' +
-  '<rect y="2" width="1" height="1" fill="#3a2a1f"/><rect x="7" y="2" width="1" height="1" fill="#3a2a1f"/>' +
-  '<rect y="3" width="8" height="2" fill="#1c1c1c"/>' +
-  '<rect x="1" y="4" width="2" height="1" fill="#fff"/><rect x="2" y="4" width="1" height="1" fill="#c4321f"/>' +
-  '<rect x="5" y="4" width="2" height="1" fill="#fff"/><rect x="5" y="4" width="1" height="1" fill="#c4321f"/>' +
-  '<rect x="3" y="5" width="2" height="1" fill="#a36f50"/><rect x="2" y="6" width="4" height="1" fill="#6d3b2c"/></svg>';
-const BANDIT_URI = "data:image/svg+xml," + encodeURIComponent(BANDIT_SVG);
+local lastAlert = {}
+local function guardLoop()
+  while true do
+    for _, t in ipairs(getPlayers()) do
+      seen[t.id] = { t = t, time = now() }
+      if not data.friends[t.id] then
+        if not lastAlert[t.id] or now() - lastAlert[t.id] > data.cooldown then
+          lastAlert[t.id] = now()
+          local msg = ("ALERT! Unknown player\nUUID: %s\nPos: x=%d y=%d z=%d\n%s"):format(
+            t.id, t.position.x, t.position.y, t.position.z, mapLink(t.position))
+          if data.site ~= "" then msg = msg .. "\nLive: " .. data.site end
+          sendDiscord(msg)
+        end
+      end
+    end
+    sleep(0.5)
+  end
+end
 
-function guardMarkerSet() {
-  const markers = {};
-  for (const p of Object.values(players)) {
-    const color = p.friend ? "#5fc58a" : "#ff6b55";
-    const label = p.friend ? p.name || "Друг" : "Чужой " + p.id.slice(0, 4);
-    const img = p.friend && p.name
-      ? "https://minotar.net/helm/" + encodeURIComponent(p.name) + "/32.png"
-      : BANDIT_URI;
-    markers["p-" + p.id] = {
-      type: "html", position: { x: p.x, y: p.y + 2, z: p.z }, anchor: { x: 17, y: 17 }, label,
-      html: '<div title="' + esc(label) + '" style="width:34px;height:34px;box-sizing:border-box;border:3px solid ' +
-        color + ';background:#111;box-shadow:0 0 6px #000"><img src="' + img +
-        '" style="width:100%;height:100%;display:block;image-rendering:pixelated"></div>',
-      listed: false, sorting: 0,
-    };
-  }
-  return { label: "Радар базы", toggleable: true, defaultHidden: false, sorting: 0, markers };
-}
-function serveMarkers(req, res, upPath) {
-  const done = (base) => {
-    base["guard-radar"] = guardMarkerSet();
-    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
-    res.end(JSON.stringify(base));
-  };
-  const headers = { ...req.headers, host: MAP_ORIGIN.host, "accept-encoding": "identity" };
-  delete headers.referer; delete headers.origin;
-  const up = http.request(
-    { host: MAP_ORIGIN.hostname, port: MAP_ORIGIN.port || 80, method: "GET", path: upPath, headers },
-    (ur) => {
-      let buf = "";
-      ur.setEncoding("utf8");
-      ur.on("data", (c) => (buf += c));
-      ur.on("end", () => {
-        let base = {};
-        try { if (ur.statusCode === 200) base = JSON.parse(buf) || {}; } catch (e) {}
-        done(base);
-      });
-    }
-  );
-  up.setTimeout(10000, () => up.destroy());
-  up.on("error", () => done({}));
-  up.end();
-}
+local function cmdAdd(arg)
+  local list = {}
+  for id, s in pairs(seen) do
+    if now() - s.time <= RECENT and not data.friends[id] then
+      list[#list + 1] = s.t
+    end
+  end
+  if #list == 0 then
+    print("No new players seen in last " .. RECENT .. "s")
+    return
+  end
+  local n = 1
+  if #list > 1 then
+    for i, t in ipairs(list) do
+      print(("%d) x=%d z=%d  %s"):format(i, t.position.x, t.position.z, t.id:sub(1, 8)))
+    end
+    write("Number: ")
+    n = tonumber(read())
+    if not n or not list[n] then print("Cancelled") return end
+  end
+  local nick = arg
+  if not nick or nick == "" then
+    write("Nick: ")
+    nick = read()
+  end
+  if nick == "" then print("Cancelled") return end
+  data.friends[list[n].id] = nick
+  save()
+  print("Added: " .. nick)
+end
 
-const server = http.createServer((req, res) => {
-  const url = new URL(req.url, "http://x");
+local function cmdAddId(nick)
+  if not nick or nick == "" then print("Usage: addid <nick>") return end
+  local r, err = http.get("https://api.mojang.com/users/profiles/minecraft/" .. textutils.urlEncode(nick))
+  if not r then print("Mojang error: " .. tostring(err)) return end
+  local body = r.readAll()
+  r.close()
+  local j = textutils.unserializeJSON(body)
+  if not j or not j.id then print("Player not found: " .. nick) return end
+  local hex = j.id:lower()
+  local id = hex:gsub("(%x%x%x%x%x%x%x%x)(%x%x%x%x)(%x%x%x%x)(%x%x%x%x)(%x+)", "%1-%2-%3-%4-%5")
+  for sid in pairs(seen) do
+    if sid:lower():gsub("%-", "") == hex then id = sid end
+  end
+  data.friends[id] = j.name or nick
+  save()
+  print("Added: " .. (j.name or nick) .. "  " .. id)
+end
 
-  if (url.pathname === "/map") {
-    res.writeHead(302, { Location: "/map/" + url.search });
-    return res.end();
-  }
-  if (url.pathname.startsWith("/map/")) {
-    const up = url.pathname.slice(4) + url.search;
-    if (/^\/maps\/[^/]+\/live\/markers\.json$/.test(url.pathname.slice(4))) return serveMarkers(req, res, up);
-    return proxyMap(req, res, up);
-  }
+local function cmdList()
+  local any = false
+  for id, nick in pairs(data.friends) do
+    print(nick .. "  " .. id:sub(1, 8))
+    any = true
+  end
+  if not any then print("List is empty") end
+end
 
-  if (req.method === "POST" && url.pathname === "/api/update") {
-    if (url.searchParams.get("key") !== KEY) {
-      res.writeHead(403);
-      return res.end("bad key");
-    }
-    return readBody(req, (body) => {
-      let list;
-      try {
-        list = JSON.parse(body).players;
-      } catch (e) {
-        res.writeHead(400);
-        return res.end("bad json");
-      }
-      if (!Array.isArray(list)) {
-        res.writeHead(400);
-        return res.end("bad data");
-      }
-      const next = {};
-      for (const p of list) {
-        if (!p || typeof p.id !== "string") continue;
-        next[p.id] = {
-          id: p.id,
-          name: typeof p.name === "string" ? p.name : "",
-          friend: !!p.friend,
-          x: +p.x || 0,
-          y: +p.y || 0,
-          z: +p.z || 0,
-        };
-        const t = (trails[p.id] = trails[p.id] || []);
-        const last = t[t.length - 1];
-        if (!last || last.x !== next[p.id].x || last.z !== next[p.id].z) {
-          t.push({ x: next[p.id].x, z: next[p.id].z });
-          if (t.length > TRAIL) t.shift();
-        }
-      }
-      for (const id of Object.keys(trails)) if (!next[id]) delete trails[id];
-      players = next;
-      lastUpdate = Date.now();
-      broadcast();
-      res.writeHead(200);
-      res.end("ok");
-    });
-  }
+local function cmdDel(nick)
+  for id, n in pairs(data.friends) do
+    if n:lower() == (nick or ""):lower() then
+      data.friends[id] = nil
+      save()
+      print("Removed: " .. n)
+      return
+    end
+  end
+  print("Not found")
+end
 
-  if (url.pathname === "/api/state") {
-    res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify(snapshot()));
-  }
+local function help()
+  print("add [nick] - add friend (stand near radar)")
+  print("addid <nick> - add friend by nick (player can be offline)")
+  print("list - show friends")
+  print("del <nick> - remove friend")
+  print("webhook <url> - set webhook")
+  print("site <url> - set website address")
+  print("key <secret> - set website secret key")
+  print("test - send test message")
+  print("cooldown <sec> - pause between alerts")
+end
 
-  if (url.pathname === "/api/stream") {
-    res.writeHead(200, {
-      "Content-Type": "text/event-stream",
-      "Cache-Control": "no-cache",
-      Connection: "keep-alive",
-    });
-    res.write("data: " + JSON.stringify(snapshot()) + "\n\n");
-    clients.add(res);
-    req.on("close", () => clients.delete(res));
-    return;
-  }
+local function cmdLoop()
+  print("Guard started. Type help")
+  while true do
+    write("> ")
+    local line = read()
+    local cmd, arg = line:match("^(%S+)%s*(.-)$")
+    if cmd == "add" then cmdAdd(arg)
+    elseif cmd == "addid" then cmdAddId(arg)
+    elseif cmd == "list" then cmdList()
+    elseif cmd == "del" then cmdDel(arg)
+    elseif cmd == "webhook" then
+      data.webhook = arg
+      save()
+      print("Webhook saved")
+    elseif cmd == "site" then
+      data.site = arg
+      save()
+      print("Site saved")
+    elseif cmd == "key" then
+      data.key = arg
+      save()
+      print("Key saved")
+    elseif cmd == "test" then
+      print(sendDiscord("Guard test message\n" .. mapLink({ x = 0, y = 70, z = 0 })) and "Sent" or "Not sent")
+    elseif cmd == "cooldown" then
+      data.cooldown = tonumber(arg) or data.cooldown
+      save()
+      print("Cooldown: " .. data.cooldown)
+    elseif cmd == "help" then help()
+    elseif cmd then print("Unknown command, type help") end
+  end
+end
 
-  if (url.pathname === "/" || url.pathname === "/index.html") {
-    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
-    return fs.createReadStream(path.join(__dirname, "index.html")).pipe(res);
-  }
-
-  // map pages sometimes request absolute paths (/assets/...): send those to the map too
-  if ((req.headers.referer || "").includes("/map/")) {
-    return proxyMap(req, res, url.pathname + url.search);
-  }
-
-  res.writeHead(404);
-  res.end("not found");
-});
-
-// keep SSE connections alive and mark the feed offline when the computer stops
-setInterval(() => {
-  for (const res of clients) res.write(": ping\n\n");
-  if (lastUpdate && Date.now() - lastUpdate > STALE_MS && Object.keys(players).length) {
-    players = {};
-    trails = {};
-    broadcast();
-  }
-}, 5000);
-
-server.listen(PORT, () => console.log("Guard site on port " + PORT));
+parallel.waitForAny(guardLoop, cmdLoop, siteLoop)
