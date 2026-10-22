@@ -3,7 +3,7 @@ local RECENT = 15
 local MAP_URL = "http://mc.vestalis.xyz:25971/#world"
 local CAM_DIST = 150
 local SEND_EVERY = 0.3
-local data = { webhook = "", friends = {}, cooldown = 15, site = "", key = "", radar = nil, objmode = "all", objcats = {} }
+local data = { webhook = "", friends = {}, cooldown = 15, site = "", key = "", radar = nil, objfilter = "auto", objcats = {}, sizes = {} }
 
 local function save()
   local f = fs.open(FILE, "w")
@@ -22,7 +22,8 @@ if fs.exists(FILE) then
     data.site = d.site or ""
     data.key = d.key or ""
     data.radar = d.radar
-    data.objmode = d.objmode or "all"
+    data.objfilter = d.objfilter or "auto"
+    data.sizes = d.sizes or {}
     data.objcats = d.objcats or {}
   end
 end
@@ -49,7 +50,17 @@ local function getPlayers()
 end
 
 -- approximate size of a contact (blocks); 0 = radar did not say
+local function manualSize(t)
+  for key, s in pairs(data.sizes) do
+    if tostring(t.id):sub(1, #key) == key or tostring(t.name or t.entityType or "") == key then
+      return s.w, s.h, s.l
+    end
+  end
+end
+
 local function sizeOf(t)
+  local mw, mh, ml = manualSize(t)
+  if mw then return mw, mh, ml end
   local w, h, l
   local s = t.size or t.dimensions or t.dims or t.boundingBox or t.bounds
   if type(s) == "number" then
@@ -65,16 +76,50 @@ local function sizeOf(t)
   return w or 0, h or 0, l or 0
 end
 
+local SKIP_CATS = { PLAYER = true, ANIMAL = true, MOB = true, ITEM = true, PROJECTILE = true }
+
+-- auto: only contacts that are not ordinary Minecraft entities (= constructions, aircraft...)
 local function wantObject(t)
-  if t.category == "PLAYER" then return false end
-  if data.objmode == "off" then return false end
-  if data.objmode == "only" then
+  if t.category == "PLAYER" or data.objfilter == "off" then return false end
+  if data.objfilter == "all" then return true end
+  if data.objfilter == "only" then
     for _, c in ipairs(data.objcats) do
       if c:upper() == tostring(t.category):upper() then return true end
     end
     return false
   end
+  if SKIP_CATS[tostring(t.category)] then return false end
+  for _, k in ipairs({ "name", "entityType", "type" }) do
+    local v = t[k]
+    if type(v) == "string" and (v:find("^entity%.minecraft%.") or v:find("^minecraft:")) then return false end
+  end
   return true
+end
+
+local function round2(v) return math.floor(v * 100 + 0.5) / 100 end
+
+-- short "key=value" text of everything the radar says about a contact (shown on the site)
+local function infoOf(t)
+  local keys = {}
+  for k in pairs(t) do
+    if k ~= "id" and k ~= "category" and k ~= "position" and k ~= "velocity" then keys[#keys + 1] = k end
+  end
+  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+  local parts = {}
+  for _, k in ipairs(keys) do
+    local v = t[k]
+    if type(v) == "number" then
+      parts[#parts + 1] = tostring(k) .. "=" .. round2(v)
+    elseif type(v) == "string" or type(v) == "boolean" then
+      parts[#parts + 1] = tostring(k) .. "=" .. tostring(v)
+    elseif type(v) == "table" then
+      for k2, v2 in pairs(v) do
+        if type(v2) == "number" then v2 = round2(v2) end
+        if type(v2) ~= "table" then parts[#parts + 1] = tostring(k) .. "." .. tostring(k2) .. "=" .. tostring(v2) end
+      end
+    end
+  end
+  return table.concat(parts, " "):sub(1, 200)
 end
 
 local function sendDiscord(text)
@@ -116,6 +161,7 @@ local function pushSite()
         x = p.x, y = p.y, z = p.z,
         vx = v.x, vy = v.y, vz = v.z,
         w = w, h = h, l = l,
+        info = infoOf(t),
       }
     end
   end
@@ -342,37 +388,60 @@ local function cmdRadar(arg)
   end
 end
 
--- objects all | off | only <CATEGORY> [CATEGORY..]   (aircraft, contraptions, mobs...)
-local function cmdObjects(arg)
+-- size <name or id-start> <length> <width> <height> | size del <key>
+local function cmdSize(arg)
   local t = {}
   for w in (arg or ""):gmatch("%S+") do t[#t + 1] = w end
-  if t[1] == "all" or t[1] == "off" then
-    data.objmode = t[1] data.objcats = {} save() print("Objects: " .. t[1])
-  elseif t[1] == "only" and #t > 1 then
-    table.remove(t, 1)
-    data.objmode = "only" data.objcats = t save()
-    print("Objects only: " .. table.concat(t, " "))
+  if t[1] == "del" and t[2] then
+    data.sizes[t[2]] = nil save() print("Removed " .. t[2])
+  elseif #t == 4 and tonumber(t[2]) and tonumber(t[3]) and tonumber(t[4]) then
+    data.sizes[t[1]] = { l = tonumber(t[2]), w = tonumber(t[3]), h = tonumber(t[4]) }
+    save() print("Size saved for " .. t[1])
   else
-    print("Objects mode: " .. data.objmode .. " " .. table.concat(data.objcats, " "))
-    print("Usage: objects all | off | only <CATEGORY>..")
+    for k, s in pairs(data.sizes) do print(("%s: %sx%sx%s"):format(k, s.l, s.w, s.h)) end
+    print("Usage: size <name|id-start> <length> <width> <height>")
   end
 end
 
--- show what the radar reports and save the full data of every contact to tracks_dump.txt
+-- objects auto | all | off | only <CATEGORY> [CATEGORY..]
+local function cmdObjects(arg)
+  local t = {}
+  for w in (arg or ""):gmatch("%S+") do t[#t + 1] = w end
+  if t[1] == "auto" or t[1] == "all" or t[1] == "off" then
+    data.objfilter = t[1] data.objcats = {} save() print("Objects: " .. t[1])
+  elseif t[1] == "only" and #t > 1 then
+    table.remove(t, 1)
+    data.objfilter = "only" data.objcats = t save()
+    print("Objects only: " .. table.concat(t, " "))
+  else
+    print("Objects: " .. data.objfilter .. " " .. table.concat(data.objcats, " "))
+    print("Usage: objects auto | all | off | only <CATEGORY>..")
+  end
+end
+
+-- what does the radar report? one line per category + full sample saved to tracks_dump.txt
 local function cmdTracks()
   local tracks = getAllTracks()
   if #tracks == 0 then print("No contacts right now") return end
-  local f = fs.open("tracks_dump.txt", "w")
-  f.write(textutils.serialize(tracks))
-  f.close()
-  for i, t in ipairs(tracks) do
-    if i > 8 then print("...") break end
-    local keys = {}
-    for k in pairs(t) do keys[#keys + 1] = k end
-    table.sort(keys)
-    print(tostring(t.category) .. ": " .. table.concat(keys, ","))
+  local groups, order, samples = {}, {}, {}
+  for _, t in ipairs(tracks) do
+    local c = tostring(t.category)
+    if not groups[c] then groups[c] = { n = 0, sample = t } order[#order + 1] = c end
+    groups[c].n = groups[c].n + 1
   end
-  print("Full data saved: tracks_dump.txt")
+  table.sort(order)
+  for _, c in ipairs(order) do
+    local g = groups[c]
+    local keys = {}
+    for k in pairs(g.sample) do keys[#keys + 1] = tostring(k) end
+    table.sort(keys)
+    print(("%s x%d: %s"):format(c, g.n, table.concat(keys, ",")))
+    samples[#samples + 1] = g.sample
+  end
+  local f = fs.open("tracks_dump.txt", "w")
+  f.write(textutils.serialize(samples))
+  f.close()
+  print("Sample of each category saved: tracks_dump.txt")
 end
 
 local function help()
@@ -380,8 +449,9 @@ local function help()
   print("addid <nick> - add friend by nick, both online+offline UUID")
   print("addid <nick> <uuid> [uuid] - add exact UUIDs")
   print("radar <x> <y> <z> <range> - show radar circle on the site")
-  print("objects all|off|only <CAT>.. - aircraft/other contacts")
-  print("tracks - list radar data fields, saves tracks_dump.txt")
+  print("objects auto|all|off|only <CAT>.. - constructions/other contacts")
+  print("tracks - what the radar reports, saves tracks_dump.txt")
+  print("size <name> <len> <wid> <hgt> - set box size of a construction")
   print("list - show friends")
   print("del <nick> - remove friend")
   print("webhook <url> - set webhook")
@@ -402,6 +472,7 @@ local function cmdLoop()
     elseif cmd == "radar" then cmdRadar(arg)
     elseif cmd == "objects" then cmdObjects(arg)
     elseif cmd == "tracks" then cmdTracks()
+    elseif cmd == "size" then cmdSize(arg)
     elseif cmd == "list" then cmdList()
     elseif cmd == "del" then cmdDel(arg)
     elseif cmd == "webhook" then
