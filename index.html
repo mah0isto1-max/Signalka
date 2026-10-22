@@ -58,19 +58,21 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
     padding: 5px 10px; font-size: 13px; color: var(--ink); text-decoration: none;
   }
   #pin { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; perspective: 400px; display: none; z-index: 5; }
-  #cube { position: absolute; width: 36px; height: 36px; left: -18px; top: -18px; transform-style: preserve-3d; animation: spin 7s linear infinite; }
-  #cube i { position: absolute; width: 36px; height: 36px; border: 3px solid var(--c, #ff6b55); box-sizing: border-box;
+  .cube { position: absolute; width: 36px; height: 36px; left: -18px; top: -18px; transform-style: preserve-3d; animation: spin 7s linear infinite; }
+  .cube i { position: absolute; width: 36px; height: 36px; border: 3px solid var(--c, #ff6b55); box-sizing: border-box;
     background: #111 center / cover no-repeat; image-rendering: pixelated; }
-  #cube i:nth-child(1) { transform: translateZ(18px); }
-  #cube i:nth-child(2) { transform: rotateY(180deg) translateZ(18px); }
-  #cube i:nth-child(3) { transform: rotateY(90deg) translateZ(18px); }
-  #cube i:nth-child(4) { transform: rotateY(-90deg) translateZ(18px); }
-  #cube i:nth-child(5) { transform: rotateX(90deg) translateZ(18px); }
-  #cube i:nth-child(6) { transform: rotateX(-90deg) translateZ(18px); }
-  #pinlabel { position: absolute; left: 0; top: 30px; transform: translateX(-50%); white-space: nowrap; font-size: 12px; font-weight: 600;
+  .cube i:nth-child(1) { transform: translateZ(18px); }
+  .cube i:nth-child(2) { transform: rotateY(180deg) translateZ(18px); }
+  .cube i:nth-child(3) { transform: rotateY(90deg) translateZ(18px); }
+  .cube i:nth-child(4) { transform: rotateY(-90deg) translateZ(18px); }
+  .cube i:nth-child(5) { transform: rotateX(90deg) translateZ(18px); }
+  .cube i:nth-child(6) { transform: rotateX(-90deg) translateZ(18px); }
+  #pins { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 4; }
+  .pp { position: absolute; left: 0; top: 0; width: 0; height: 0; perspective: 400px; will-change: transform; }
+  #pinlabel, .pl { position: absolute; left: 0; top: 30px; transform: translateX(-50%); white-space: nowrap; font-size: 12px; font-weight: 600;
     padding: 1px 7px; border-radius: 5px; color: #fff; background: var(--c, #ff6b55); }
   @keyframes spin { from { transform: rotateX(-25deg) rotateY(0deg); } to { transform: rotateX(-25deg) rotateY(360deg); } }
-  @media (prefers-reduced-motion: reduce) { #cube { animation: none; transform: rotateX(-25deg) rotateY(25deg); } }
+  @media (prefers-reduced-motion: reduce) { .cube { animation: none; transform: rotateX(-25deg) rotateY(25deg); } }
   #radar { width: 100%; height: 100%; display: block; background: var(--panel); }
   @media (max-width: 800px) {
     body { grid-template-columns: 1fr; grid-template-rows: auto 220px 1fr; }
@@ -92,7 +94,8 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
 <main>
   <div id="mapwrap">
     <iframe id="map" title="3D-карта сервера" allowfullscreen></iframe>
-    <div id="pin"><div id="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div><div id="pinlabel"></div></div>
+    <div id="pins"></div>
+    <div id="pin"><div class="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div><div id="pinlabel"></div></div>
     <div id="tools">
       <label><input type="checkbox" id="follow" checked> Камера следует за игроком</label>
       <a id="open" href="#" target="_blank" rel="noopener">Открыть карту</a>
@@ -177,8 +180,76 @@ function render() {
   updatePin();
 }
 
+// ---- pins anchored to the world: project player coordinates with the map's own camera ----
+let cam = null, camOk = false, lastFind = 0;
+const pins = {};
+
+function findCam() {
+  try {
+    const root = $("map").contentWindow.bluemap && $("map").contentWindow.bluemap.mapViewer;
+    if (!root) return null;
+    const seen = new Set(), q = [[root, 0]];
+    while (q.length && seen.size < 3000) {
+      const [o, d] = q.shift();
+      if (!o || typeof o !== "object" || o.nodeType || seen.has(o)) continue;
+      seen.add(o);
+      if (o.projectionMatrix && o.matrixWorldInverse && o.matrixWorldInverse.elements) return o;
+      if (d < 3) for (const k of Object.keys(o)) {
+        let v; try { v = o[k]; } catch (e) { continue; }
+        if (v && typeof v === "object") q.push([v, d + 1]);
+      }
+    }
+  } catch (e) {}
+  return null;
+}
+
+function makePin() {
+  const el = document.createElement("div");
+  el.className = "pp";
+  el.innerHTML = '<div class="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="pl"></div>';
+  $("pins").appendChild(el);
+  return el;
+}
+
+function pinsFrame() {
+  requestAnimationFrame(pinsFrame);
+  if (!mapReady) return;
+  const now = Date.now();
+  if (!cam && now - lastFind > 1000) { cam = findCam(); lastFind = now; }
+  camOk = !!cam;
+  if (!cam) { for (const id in pins) pins[id].style.display = "none"; return; }
+  const V = cam.matrixWorldInverse.elements, P = cam.projectionMatrix.elements;
+  const W = $("mapwrap").clientWidth, H = $("mapwrap").clientHeight;
+  const alive = new Set();
+  for (const p of state.players) {
+    alive.add(p.id);
+    const el = pins[p.id] || (pins[p.id] = makePin());
+    const x = p.x, y = p.y + 2, z = p.z;
+    const vx = V[0]*x + V[4]*y + V[8]*z + V[12];
+    const vy = V[1]*x + V[5]*y + V[9]*z + V[13];
+    const vz = V[2]*x + V[6]*y + V[10]*z + V[14];
+    const cx = P[0]*vx + P[4]*vy + P[8]*vz + P[12];
+    const cy = P[1]*vx + P[5]*vy + P[9]*vz + P[13];
+    const cw = P[3]*vx + P[7]*vy + P[11]*vz + P[15];
+    const sx = (cx / cw * 0.5 + 0.5) * W, sy = (1 - (cy / cw * 0.5 + 0.5)) * H;
+    if (!(cw > 0) || !isFinite(sx) || sx < -60 || sy < -60 || sx > W + 60 || sy > H + 60) { el.style.display = "none"; continue; }
+    el.style.display = "block";
+    el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`;
+    const src = p.name ? `https://minotar.net/helm/${encodeURIComponent(p.name)}/64.png` : BANDIT;
+    if (el.dataset.src !== src) {
+      el.dataset.src = src;
+      el.querySelectorAll(".cube i").forEach((f) => { f.style.backgroundImage = `url("${src}")`; });
+    }
+    el.style.setProperty("--c", p.friend ? "#5fc58a" : "#ff6b55");
+    el.querySelector(".pl").textContent = p.friend ? p.name : "Чужой " + p.id.slice(0, 4);
+  }
+  for (const id in pins) if (!alive.has(id)) { pins[id].remove(); delete pins[id]; }
+}
+requestAnimationFrame(pinsFrame);
+
 function updatePin() {
   const pin = $("pin");
+  if (camOk) { pin.style.display = "none"; return; }
   const sel = state.players.find((p) => p.id === selected);
   if (!sel || !mapReady) { pin.style.display = "none"; return; }
   let near = true;
@@ -192,7 +263,7 @@ function updatePin() {
   const src = sel.name ? `https://minotar.net/helm/${encodeURIComponent(sel.name)}/64.png` : BANDIT;
   if (pin.dataset.src !== src) {
     pin.dataset.src = src;
-    pin.querySelectorAll("#cube i").forEach((f) => { f.style.backgroundImage = `url("${src}")`; });
+    pin.querySelectorAll(".cube i").forEach((f) => { f.style.backgroundImage = `url("${src}")`; });
   }
   pin.style.setProperty("--c", color);
   $("pinlabel").textContent = sel.friend ? sel.name : "Чужой " + sel.id.slice(0, 4);
@@ -268,7 +339,7 @@ function connect() {
 }
 window.addEventListener("resize", () => drawRadar(state.players));
 $("follow").addEventListener("change", () => { lastCam = null; render(); });
-$("map").addEventListener("load", () => { mapReady = true; lastCam = null; render(); });
+$("map").addEventListener("load", () => { mapReady = true; cam = null; lastFind = 0; lastCam = null; render(); });
 $("map").src = MAP_URL + MAP_HASH;
 connect();
 </script>
