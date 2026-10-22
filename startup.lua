@@ -3,7 +3,7 @@ local RECENT = 15
 local MAP_URL = "http://mc.vestalis.xyz:25971/#world"
 local CAM_DIST = 150
 local SEND_EVERY = 0.5
-local data = { webhook = "", friends = {}, cooldown = 15, site = "", key = "" }
+local data = { webhook = "", friends = {}, cooldown = 15, site = "", key = "", radar = nil }
 
 local function save()
   local f = fs.open(FILE, "w")
@@ -21,6 +21,7 @@ if fs.exists(FILE) then
     data.cooldown = d.cooldown or 15
     data.site = d.site or ""
     data.key = d.key or ""
+    data.radar = d.radar
   end
 end
 
@@ -72,7 +73,7 @@ local function pushSite()
     }
   end
   local url = data.site:gsub("/+$", "") .. "/api/update?key=" .. textutils.urlEncode(data.key)
-  local body = textutils.serializeJSON({ players = list })
+  local body = textutils.serializeJSON({ players = list, radar = data.radar })
   local ok, err = http.post(url, body, { ["Content-Type"] = "application/json" })
   if ok then ok.close() return true end
   return false, err
@@ -142,22 +143,114 @@ local function cmdAdd(arg)
   print("Added: " .. nick)
 end
 
-local function cmdAddId(nick)
-  if not nick or nick == "" then print("Usage: addid <nick>") return end
-  local r, err = http.get("https://api.mojang.com/users/profiles/minecraft/" .. textutils.urlEncode(nick))
-  if not r then print("Mojang error: " .. tostring(err)) return end
-  local body = r.readAll()
-  r.close()
-  local j = textutils.unserializeJSON(body)
-  if not j or not j.id then print("Player not found: " .. nick) return end
-  local hex = j.id:lower()
-  local id = hex:gsub("(%x%x%x%x%x%x%x%x)(%x%x%x%x)(%x%x%x%x)(%x%x%x%x)(%x+)", "%1-%2-%3-%4-%5")
-  for sid in pairs(seen) do
-    if sid:lower():gsub("%-", "") == hex then id = sid end
+-- MD5 (needs bit32, available in CC: Tweaked) and Minecraft offline UUID
+local function md5(msg)
+  local band, bor, bxor, bnot, lrot = bit32.band, bit32.bor, bit32.bxor, bit32.bnot, bit32.lrotate
+  local MOD = 4294967296
+  local s = {
+    7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22, 7, 12, 17, 22,
+    5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20, 5, 9, 14, 20,
+    4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23, 4, 11, 16, 23,
+    6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21, 6, 10, 15, 21,
+  }
+  local K = {}
+  for i = 0, 63 do K[i] = math.floor(math.abs(math.sin(i + 1)) * MOD) end
+
+  local len = #msg
+  msg = msg .. "\128" .. string.rep("\0", (55 - len) % 64)
+  local bits = len * 8
+  for i = 0, 7 do msg = msg .. string.char(math.floor(bits / 256 ^ i) % 256) end
+
+  local a0, b0, c0, d0 = 0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476
+  for chunk = 1, #msg, 64 do
+    local M = {}
+    for i = 0, 15 do
+      local b1, b2, b3, b4 = msg:byte(chunk + i * 4, chunk + i * 4 + 3)
+      M[i] = b1 + b2 * 256 + b3 * 65536 + b4 * 16777216
+    end
+    local A, B, C, D = a0, b0, c0, d0
+    for i = 0, 63 do
+      local F, g
+      if i < 16 then
+        F = bor(band(B, C), band(bnot(B), D)); g = i
+      elseif i < 32 then
+        F = bor(band(D, B), band(bnot(D), C)); g = (5 * i + 1) % 16
+      elseif i < 48 then
+        F = bxor(B, bxor(C, D)); g = (3 * i + 5) % 16
+      else
+        F = bxor(C, bor(B, bnot(D))); g = (7 * i) % 16
+      end
+      F = (F + A + K[i] + M[g]) % MOD
+      A = D; D = C; C = B
+      B = (B + lrot(F, s[i + 1])) % MOD
+    end
+    a0 = (a0 + A) % MOD; b0 = (b0 + B) % MOD
+    c0 = (c0 + C) % MOD; d0 = (d0 + D) % MOD
   end
-  data.friends[id] = j.name or nick
+
+  local out = {}
+  for _, w in ipairs({ a0, b0, c0, d0 }) do
+    for i = 0, 3 do out[#out + 1] = math.floor(w / 256 ^ i) % 256 end
+  end
+  return out
+end
+
+-- UUID a cracked (offline-mode) server gives a nickname
+local function offlineUuid(nick)
+  local b = md5("OfflinePlayer:" .. nick)
+  b[7] = bit32.bor(bit32.band(b[7], 0x0f), 0x30)
+  b[9] = bit32.bor(bit32.band(b[9], 0x3f), 0x80)
+  local hex = {}
+  for i = 1, 16 do hex[i] = ("%02x"):format(b[i]) end
+  local h = table.concat(hex)
+  return h:sub(1, 8) .. "-" .. h:sub(9, 12) .. "-" .. h:sub(13, 16) .. "-" .. h:sub(17, 20) .. "-" .. h:sub(21)
+end
+
+-- any UUID text (with or without dashes) -> lowercase dashed form, or nil
+local function normUuid(text)
+  local hex = ((text or ""):lower():gsub("[^%x]", ""))
+  if #hex ~= 32 then return nil end
+  return hex:sub(1, 8) .. "-" .. hex:sub(9, 12) .. "-" .. hex:sub(13, 16) .. "-" .. hex:sub(17, 20) .. "-" .. hex:sub(21)
+end
+
+local function setFriend(nick, id)
+  for sid in pairs(seen) do          -- keep the exact spelling the radar uses
+    if sid:lower():gsub("%-", "") == id:gsub("%-", "") then id = sid end
+  end
+  data.friends[id] = nick
+  print("  " .. id)
+end
+
+-- addid <nick>                 : adds the online (Mojang) UUID and the offline UUID
+-- addid <nick> <uuid> [uuid..] : adds exactly the UUIDs you give
+local function cmdAddId(arg)
+  local toks = {}
+  for t in (arg or ""):gmatch("%S+") do toks[#toks + 1] = t end
+  local nick = table.remove(toks, 1)
+  if not nick then print("Usage: addid <nick> [uuid] [uuid]") return end
+  local ids = {}
+  if #toks > 0 then
+    for _, t in ipairs(toks) do
+      local id = normUuid(t)
+      if not id then print("Bad UUID: " .. t) return end
+      ids[#ids + 1] = id
+    end
+  else
+    ids[1] = offlineUuid(nick)
+    local r = http.get("https://api.mojang.com/users/profiles/minecraft/" .. textutils.urlEncode(nick))
+    if r then
+      local j = textutils.unserializeJSON(r.readAll())
+      r.close()
+      local online = j and normUuid(j.id)
+      if online and online ~= ids[1] then ids[#ids + 1] = online end
+      if online then nick = j.name or nick end
+    else
+      print("Mojang lookup failed, adding offline UUID only")
+    end
+  end
+  print("Added " .. nick .. ":")
+  for _, id in ipairs(ids) do setFriend(nick, id) end
   save()
-  print("Added: " .. (j.name or nick) .. "  " .. id)
 end
 
 local function cmdList()
@@ -170,20 +263,43 @@ local function cmdList()
 end
 
 local function cmdDel(nick)
-  for id, n in pairs(data.friends) do
-    if n:lower() == (nick or ""):lower() then
+  local n = 0
+  for id, name in pairs(data.friends) do
+    if name:lower() == (nick or ""):lower() then
       data.friends[id] = nil
-      save()
-      print("Removed: " .. n)
-      return
+      n = n + 1
     end
   end
-  print("Not found")
+  if n > 0 then save() print("Removed " .. n .. " UUID(s) of " .. nick) else print("Not found") end
+end
+
+-- radar <x> <y> <z> <range> | radar here <range> | radar off
+local function cmdRadar(arg)
+  local t = {}
+  for w in (arg or ""):gmatch("%S+") do t[#t + 1] = w end
+  if t[1] == "off" then
+    data.radar = nil save() print("Radar circle removed")
+  elseif t[1] == "here" then
+    local x, y, z = gps.locate(2)
+    local range = tonumber(t[2])
+    if not x then print("GPS not available, use: radar <x> <y> <z> <range>") return end
+    if not range then print("Usage: radar here <range>") return end
+    data.radar = { x = x, y = y, z = z, range = range } save() print("Radar saved")
+  elseif #t == 4 and tonumber(t[1]) and tonumber(t[2]) and tonumber(t[3]) and tonumber(t[4]) then
+    data.radar = { x = tonumber(t[1]), y = tonumber(t[2]), z = tonumber(t[3]), range = tonumber(t[4]) }
+    save() print("Radar saved")
+  elseif data.radar then
+    print(("Radar: x=%d y=%d z=%d range=%d"):format(data.radar.x, data.radar.y, data.radar.z, data.radar.range))
+  else
+    print("Usage: radar <x> <y> <z> <range> | radar here <range> | radar off")
+  end
 end
 
 local function help()
   print("add [nick] - add friend (stand near radar)")
-  print("addid <nick> - add friend by nick (player can be offline)")
+  print("addid <nick> - add friend by nick, both online+offline UUID")
+  print("addid <nick> <uuid> [uuid] - add exact UUIDs")
+  print("radar <x> <y> <z> <range> - show radar circle on the site")
   print("list - show friends")
   print("del <nick> - remove friend")
   print("webhook <url> - set webhook")
@@ -201,6 +317,7 @@ local function cmdLoop()
     local cmd, arg = line:match("^(%S+)%s*(.-)$")
     if cmd == "add" then cmdAdd(arg)
     elseif cmd == "addid" then cmdAddId(arg)
+    elseif cmd == "radar" then cmdRadar(arg)
     elseif cmd == "list" then cmdList()
     elseif cmd == "del" then cmdDel(arg)
     elseif cmd == "webhook" then
