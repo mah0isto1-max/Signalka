@@ -25,6 +25,7 @@ function cleanObjects(list) {
     x: +(o && o.x) || 0, y: +(o && o.y) || 0, z: +(o && o.z) || 0,
     vx: +(o && o.vx) || 0, vy: +(o && o.vy) || 0, vz: +(o && o.vz) || 0,
     w: +(o && o.w) || 0, h: +(o && o.h) || 0, l: +(o && o.l) || 0,
+    info: String((o && o.info) || "").slice(0, 200),
   })).filter((o) => o.id);
 }
 
