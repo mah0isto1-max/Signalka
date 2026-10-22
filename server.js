@@ -69,6 +69,56 @@ function proxyMap(req, res, upPath) {
   req.pipe(up);
 }
 
+
+// ---- live markers: merge our players into BlueMap's markers.json ----
+function esc(t) {
+  return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+function guardMarkerSet() {
+  const markers = {};
+  for (const p of Object.values(players)) {
+    const c = p.friend ? { r: 95, g: 197, b: 138 } : { r: 255, g: 107, b: 85 };
+    const label = p.friend ? p.name || "Друг" : "Чужой " + p.id.slice(0, 4);
+    markers["beam-" + p.id] = {
+      type: "line", position: { x: p.x, y: p.y, z: p.z }, label,
+      line: [{ x: p.x, y: p.y, z: p.z }, { x: p.x, y: p.y + 40, z: p.z }],
+      lineWidth: 5, lineColor: { ...c, a: 1 }, depthTest: false, listed: false, sorting: 0,
+    };
+    markers["tag-" + p.id] = {
+      type: "html", position: { x: p.x, y: p.y + 42, z: p.z }, anchor: { x: 0, y: 0 }, label,
+      html: '<div style="padding:2px 8px;border-radius:6px;font:600 13px sans-serif;color:#fff;background:rgb(' +
+        c.r + "," + c.g + "," + c.b + ');white-space:nowrap">' + esc(label) + "</div>",
+      listed: false, sorting: 0,
+    };
+  }
+  return { label: "Радар базы", toggleable: true, defaultHidden: false, sorting: 0, markers };
+}
+function serveMarkers(req, res, upPath) {
+  const done = (base) => {
+    base["guard-radar"] = guardMarkerSet();
+    res.writeHead(200, { "Content-Type": "application/json", "Cache-Control": "no-store" });
+    res.end(JSON.stringify(base));
+  };
+  const headers = { ...req.headers, host: MAP_ORIGIN.host, "accept-encoding": "identity" };
+  delete headers.referer; delete headers.origin;
+  const up = http.request(
+    { host: MAP_ORIGIN.hostname, port: MAP_ORIGIN.port || 80, method: "GET", path: upPath, headers },
+    (ur) => {
+      let buf = "";
+      ur.setEncoding("utf8");
+      ur.on("data", (c) => (buf += c));
+      ur.on("end", () => {
+        let base = {};
+        try { if (ur.statusCode === 200) base = JSON.parse(buf) || {}; } catch (e) {}
+        done(base);
+      });
+    }
+  );
+  up.setTimeout(10000, () => up.destroy());
+  up.on("error", () => done({}));
+  up.end();
+}
+
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");
 
@@ -77,7 +127,9 @@ const server = http.createServer((req, res) => {
     return res.end();
   }
   if (url.pathname.startsWith("/map/")) {
-    return proxyMap(req, res, url.pathname.slice(4) + url.search);
+    const up = url.pathname.slice(4) + url.search;
+    if (/^\/maps\/[^/]+\/live\/markers\.json$/.test(url.pathname.slice(4))) return serveMarkers(req, res, up);
+    return proxyMap(req, res, up);
   }
 
   if (req.method === "POST" && url.pathname === "/api/update") {
