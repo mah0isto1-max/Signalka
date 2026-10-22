@@ -550,8 +550,8 @@ async function initMap() {
   d.textContent = out.join("\n");
   d.title = "нажмите, чтобы скрыть";
   d.onclick = () => d.remove();
-  $("map").src = MAP_URL + MAP_HASH;
 }
+$("map").src = MAP_URL + MAP_HASH;
 initMap();
 connect();
 </script>
