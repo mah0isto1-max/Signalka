@@ -2,8 +2,8 @@ local FILE = "guard_data"
 local RECENT = 15
 local MAP_URL = "http://mc.vestalis.xyz:25971/#world"
 local CAM_DIST = 150
-local SEND_EVERY = 0.5
-local data = { webhook = "", friends = {}, cooldown = 15, site = "", key = "", radar = nil }
+local SEND_EVERY = 0.3
+local data = { webhook = "", friends = {}, cooldown = 15, site = "", key = "", radar = nil, objmode = "all", objcats = {} }
 
 local function save()
   local f = fs.open(FILE, "w")
@@ -22,6 +22,8 @@ if fs.exists(FILE) then
     data.site = d.site or ""
     data.key = d.key or ""
     data.radar = d.radar
+    data.objmode = d.objmode or "all"
+    data.objcats = d.objcats or {}
   end
 end
 
@@ -32,15 +34,47 @@ assert(radar, "Radar not found: place the computer next to the radar")
 local seen = {}
 local function now() return os.epoch("utc") / 1000 end
 
-local function getPlayers()
+local function getAllTracks()
   local ok, tracks = pcall(radar.getTracks)
+  if ok and type(tracks) == "table" then return tracks end
+  return {}
+end
+
+local function getPlayers()
   local res = {}
-  if ok and tracks then
-    for _, t in ipairs(tracks) do
-      if t.category == "PLAYER" then res[#res + 1] = t end
-    end
+  for _, t in ipairs(getAllTracks()) do
+    if t.category == "PLAYER" then res[#res + 1] = t end
   end
   return res
+end
+
+-- approximate size of a contact (blocks); 0 = radar did not say
+local function sizeOf(t)
+  local w, h, l
+  local s = t.size or t.dimensions or t.dims or t.boundingBox or t.bounds
+  if type(s) == "number" then
+    w, h, l = s, s, s
+  elseif type(s) == "table" then
+    l = tonumber(s.x or s.length or s.l or s[1])
+    h = tonumber(s.y or s.height or s.h or s[2])
+    w = tonumber(s.z or s.width or s.w or s[3])
+  end
+  l = l or tonumber(t.length)
+  h = h or tonumber(t.height)
+  w = w or tonumber(t.width)
+  return w or 0, h or 0, l or 0
+end
+
+local function wantObject(t)
+  if t.category == "PLAYER" then return false end
+  if data.objmode == "off" then return false end
+  if data.objmode == "only" then
+    for _, c in ipairs(data.objcats) do
+      if c:upper() == tostring(t.category):upper() then return true end
+    end
+    return false
+  end
+  return true
 end
 
 local function sendDiscord(text)
@@ -63,17 +97,30 @@ end
 -- push radar data to the website
 local function pushSite()
   if data.site == "" or data.key == "" then return false end
-  local list = {}
-  for _, t in ipairs(getPlayers()) do
-    list[#list + 1] = {
-      id = t.id,
-      name = data.friends[t.id] or "",
-      friend = data.friends[t.id] ~= nil,
-      x = t.position.x, y = t.position.y, z = t.position.z,
-    }
+  local list, objs = {}, {}
+  for _, t in ipairs(getAllTracks()) do
+    local p = t.position or {}
+    if t.category == "PLAYER" then
+      list[#list + 1] = {
+        id = t.id,
+        name = data.friends[t.id] or "",
+        friend = data.friends[t.id] ~= nil,
+        x = p.x, y = p.y, z = p.z,
+      }
+    elseif wantObject(t) and #objs < 40 then
+      local v = t.velocity or {}
+      local w, h, l = sizeOf(t)
+      objs[#objs + 1] = {
+        id = tostring(t.id), cat = tostring(t.category),
+        name = tostring(t.name or t.entityType or t.type or t.category),
+        x = p.x, y = p.y, z = p.z,
+        vx = v.x, vy = v.y, vz = v.z,
+        w = w, h = h, l = l,
+      }
+    end
   end
   local url = data.site:gsub("/+$", "") .. "/api/update?key=" .. textutils.urlEncode(data.key)
-  local body = textutils.serializeJSON({ players = list, radar = data.radar })
+  local body = textutils.serializeJSON({ players = list, objects = objs, radar = data.radar })
   local ok, err = http.post(url, body, { ["Content-Type"] = "application/json" })
   if ok then ok.close() return true end
   return false, err
@@ -295,11 +342,46 @@ local function cmdRadar(arg)
   end
 end
 
+-- objects all | off | only <CATEGORY> [CATEGORY..]   (aircraft, contraptions, mobs...)
+local function cmdObjects(arg)
+  local t = {}
+  for w in (arg or ""):gmatch("%S+") do t[#t + 1] = w end
+  if t[1] == "all" or t[1] == "off" then
+    data.objmode = t[1] data.objcats = {} save() print("Objects: " .. t[1])
+  elseif t[1] == "only" and #t > 1 then
+    table.remove(t, 1)
+    data.objmode = "only" data.objcats = t save()
+    print("Objects only: " .. table.concat(t, " "))
+  else
+    print("Objects mode: " .. data.objmode .. " " .. table.concat(data.objcats, " "))
+    print("Usage: objects all | off | only <CATEGORY>..")
+  end
+end
+
+-- show what the radar reports and save the full data of every contact to tracks_dump.txt
+local function cmdTracks()
+  local tracks = getAllTracks()
+  if #tracks == 0 then print("No contacts right now") return end
+  local f = fs.open("tracks_dump.txt", "w")
+  f.write(textutils.serialize(tracks))
+  f.close()
+  for i, t in ipairs(tracks) do
+    if i > 8 then print("...") break end
+    local keys = {}
+    for k in pairs(t) do keys[#keys + 1] = k end
+    table.sort(keys)
+    print(tostring(t.category) .. ": " .. table.concat(keys, ","))
+  end
+  print("Full data saved: tracks_dump.txt")
+end
+
 local function help()
   print("add [nick] - add friend (stand near radar)")
   print("addid <nick> - add friend by nick, both online+offline UUID")
   print("addid <nick> <uuid> [uuid] - add exact UUIDs")
   print("radar <x> <y> <z> <range> - show radar circle on the site")
+  print("objects all|off|only <CAT>.. - aircraft/other contacts")
+  print("tracks - list radar data fields, saves tracks_dump.txt")
   print("list - show friends")
   print("del <nick> - remove friend")
   print("webhook <url> - set webhook")
@@ -318,6 +400,8 @@ local function cmdLoop()
     if cmd == "add" then cmdAdd(arg)
     elseif cmd == "addid" then cmdAddId(arg)
     elseif cmd == "radar" then cmdRadar(arg)
+    elseif cmd == "objects" then cmdObjects(arg)
+    elseif cmd == "tracks" then cmdTracks()
     elseif cmd == "list" then cmdList()
     elseif cmd == "del" then cmdDel(arg)
     elseif cmd == "webhook" then
