@@ -136,7 +136,7 @@ let selected = null;
 let lastCam = null, lastCamTime = 0, mapReady = false;
 
 function mapLink(p) {
-  return `${MAP_HASH}:${(+p.x).toFixed(1)}:${(+p.y).toFixed(1)}:${(+p.z).toFixed(1)}:${CAM_DIST}:0:0:0:0:perspective`;
+  return `${MAP_HASH}:${Math.round(p.x)}:${Math.round(p.y)}:${Math.round(p.z)}:${CAM_DIST}:0:0:0:0:perspective`;
 }
 
 function render() {
@@ -194,7 +194,7 @@ function render() {
       ico.textContent = "▣";
       const box = document.createElement("div");
       const b = document.createElement("b");
-      b.textContent = o.name || o.cat || "Объект";
+      b.textContent = short(o.name) || o.cat || "Объект";
       const s = document.createElement("small");
       s.textContent = `${o.cat}  ·  x ${Math.floor(o.x)} y ${Math.floor(o.y)} z ${Math.floor(o.z)}  ·  ` +
         (o.l ? `${fmt(o.l)}×${fmt(o.w)}×${fmt(o.h)} бл.` : "размер неизвестен") + (o.info ? `\n${o.info}` : "");
@@ -214,6 +214,7 @@ function render() {
   updatePin();
 }
 
+const short = (n) => String(n || "").replace(/^entity\.[a-z_]+\./, "");
 const fmt = (n) => Math.round(n * 10) / 10;
 
 // ---- smooth motion: extrapolate from the last two radar updates, then ease toward it ----
@@ -338,7 +339,7 @@ function drawObjects(g, pr) {
     const top = pr(q.x, q.y + h / 2, q.z);
     if (top) {
       g.fillStyle = "#ffb347"; g.font = "600 12px system-ui, sans-serif";
-      g.fillText(`${o.name || o.cat} ${known ? "" : "≈"}${fmt(l)}×${fmt(w)}×${fmt(h)}`, top[0] + 8, top[1] - 6);
+      g.fillText(`${short(o.name) || o.cat} ${known ? "" : "≈"}${fmt(l)}×${fmt(w)}×${fmt(h)}`, top[0] + 8, top[1] - 6);
     }
   }
 }
@@ -415,8 +416,8 @@ function moveCamera(p, force) {
   if (!mapReady || !$("follow").checked) return;
   const now = Date.now();
   const moved = !lastCam || lastCam.id !== p.id ||
-    Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 0.4 || Math.abs(lastCam.y - p.y) >= 1;
-  if (!force && (!moved || now - lastCamTime < 110)) return;
+    Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 1 || Math.abs(lastCam.y - p.y) >= 2;
+  if (!force && (!moved || now - lastCamTime < 250)) return;
   try {
     const w = $("map").contentWindow;
     if (!w.location.pathname.startsWith("/map")) {   // frame wandered off the map: reload it once
@@ -486,7 +487,7 @@ function drawRadar(ps) {
     g.strokeStyle = "#ffb347"; g.lineWidth = 2;
     g.strokeRect(X(o.x) - ow / 2, Z(o.z) - oh / 2, ow, oh);
     g.fillStyle = "#ffb347"; g.font = "12px system-ui, sans-serif";
-    g.fillText(o.name || o.cat, X(o.x) + ow / 2 + 4, Z(o.z) + 4);
+    g.fillText(short(o.name) || o.cat, X(o.x) + ow / 2 + 4, Z(o.z) + 4);
   }
   for (const p of ps) {
     const color = p.friend ? col("--ok") : col("--alert");
