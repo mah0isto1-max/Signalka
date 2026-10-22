@@ -74,20 +74,29 @@ function proxyMap(req, res, upPath) {
 function esc(t) {
   return String(t).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
+const BANDIT_SVG =
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" shape-rendering="crispEdges">' +
+  '<rect width="8" height="8" fill="#c4906b"/><rect width="8" height="2" fill="#3a2a1f"/>' +
+  '<rect y="2" width="1" height="1" fill="#3a2a1f"/><rect x="7" y="2" width="1" height="1" fill="#3a2a1f"/>' +
+  '<rect y="3" width="8" height="2" fill="#1c1c1c"/>' +
+  '<rect x="1" y="4" width="2" height="1" fill="#fff"/><rect x="2" y="4" width="1" height="1" fill="#c4321f"/>' +
+  '<rect x="5" y="4" width="2" height="1" fill="#fff"/><rect x="5" y="4" width="1" height="1" fill="#c4321f"/>' +
+  '<rect x="3" y="5" width="2" height="1" fill="#a36f50"/><rect x="2" y="6" width="4" height="1" fill="#6d3b2c"/></svg>';
+const BANDIT_URI = "data:image/svg+xml," + encodeURIComponent(BANDIT_SVG);
+
 function guardMarkerSet() {
   const markers = {};
   for (const p of Object.values(players)) {
-    const c = p.friend ? { r: 95, g: 197, b: 138 } : { r: 255, g: 107, b: 85 };
+    const color = p.friend ? "#5fc58a" : "#ff6b55";
     const label = p.friend ? p.name || "Друг" : "Чужой " + p.id.slice(0, 4);
-    markers["beam-" + p.id] = {
-      type: "line", position: { x: p.x, y: p.y, z: p.z }, label,
-      line: [{ x: p.x, y: p.y, z: p.z }, { x: p.x, y: p.y + 40, z: p.z }],
-      lineWidth: 5, lineColor: { ...c, a: 1 }, depthTest: false, listed: false, sorting: 0,
-    };
-    markers["tag-" + p.id] = {
-      type: "html", position: { x: p.x, y: p.y + 42, z: p.z }, anchor: { x: 0, y: 0 }, label,
-      html: '<div style="padding:2px 8px;border-radius:6px;font:600 13px sans-serif;color:#fff;background:rgb(' +
-        c.r + "," + c.g + "," + c.b + ');white-space:nowrap">' + esc(label) + "</div>",
+    const img = p.friend && p.name
+      ? "https://minotar.net/helm/" + encodeURIComponent(p.name) + "/32.png"
+      : BANDIT_URI;
+    markers["p-" + p.id] = {
+      type: "html", position: { x: p.x, y: p.y + 2, z: p.z }, anchor: { x: 17, y: 17 }, label,
+      html: '<div title="' + esc(label) + '" style="width:34px;height:34px;box-sizing:border-box;border:3px solid ' +
+        color + ';background:#111;box-shadow:0 0 6px #000"><img src="' + img +
+        '" style="width:100%;height:100%;display:block;image-rendering:pixelated"></div>',
       listed: false, sorting: 0,
     };
   }
