@@ -52,7 +52,7 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
   main { display: grid; grid-template-rows: 1fr 240px; min-height: 0; min-width: 0; }
   #mapwrap { position: relative; min-height: 0; border-bottom: 1px solid var(--line); }
   iframe { width: 100%; height: 100%; border: 0; background: var(--line); }
-  #tools { position: absolute; right: 10px; top: 10px; display: flex; gap: 8px; }
+  #tools { position: absolute; right: 64px; bottom: 12px; display: flex; gap: 8px; z-index: 6; }
   #tools label, #tools a {
     background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
     padding: 5px 10px; font-size: 13px; color: var(--ink); text-decoration: none;
@@ -67,6 +67,7 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
   .cube i:nth-child(4) { transform: rotateY(-90deg) translateZ(18px); }
   .cube i:nth-child(5) { transform: rotateX(90deg) translateZ(18px); }
   .cube i:nth-child(6) { transform: rotateX(-90deg) translateZ(18px); }
+  #ring { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
   #pins { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 4; }
   .pp { position: absolute; left: 0; top: 0; width: 0; height: 0; perspective: 400px; will-change: transform; }
   #pinlabel, .pl { position: absolute; left: 0; top: 30px; transform: translateX(-50%); white-space: nowrap; font-size: 12px; font-weight: 600;
@@ -94,6 +95,7 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
 <main>
   <div id="mapwrap">
     <iframe id="map" title="3D-карта сервера" allowfullscreen></iframe>
+    <canvas id="ring"></canvas>
     <div id="pins"></div>
     <div id="pin"><div class="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div><div id="pinlabel"></div></div>
     <div id="tools">
@@ -211,15 +213,56 @@ function makePin() {
   return el;
 }
 
+function drawRing(V, P, W, H) {
+  const c = $("ring"), dpr = window.devicePixelRatio || 1;
+  if (c.width !== Math.round(W * dpr) || c.height !== Math.round(H * dpr)) { c.width = Math.round(W * dpr); c.height = Math.round(H * dpr); }
+  const g = c.getContext("2d");
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  g.clearRect(0, 0, W, H);
+  const r = state.radar;
+  if (!V || !r) return;
+  const pr = (x, y, z) => {
+    const vx = V[0]*x + V[4]*y + V[8]*z + V[12], vy = V[1]*x + V[5]*y + V[9]*z + V[13], vz = V[2]*x + V[6]*y + V[10]*z + V[14];
+    const cx = P[0]*vx + P[4]*vy + P[8]*vz + P[12], cy = P[1]*vx + P[5]*vy + P[9]*vz + P[13];
+    const cw = P[3]*vx + P[7]*vy + P[11]*vz + P[15];
+    return cw > 0 ? [(cx / cw * 0.5 + 0.5) * W, (1 - (cy / cw * 0.5 + 0.5)) * H] : null;
+  };
+  const N = 96, pts = [];
+  for (let i = 0; i <= N; i++) {
+    const a = (i / N) * Math.PI * 2;
+    pts.push(pr(r.x + Math.cos(a) * r.range, r.y, r.z + Math.sin(a) * r.range));
+  }
+  g.lineWidth = 2; g.strokeStyle = "rgba(109,183,232,.95)"; g.fillStyle = "rgba(109,183,232,.10)";
+  g.setLineDash([10, 6]);
+  g.beginPath();
+  let pen = false, all = true;
+  for (const p of pts) {
+    if (!p) { pen = false; all = false; continue; }
+    if (pen) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]);
+    pen = true;
+  }
+  if (all) g.fill();
+  g.stroke();
+  g.setLineDash([]);
+  const o = pr(r.x, r.y, r.z);
+  if (o) {
+    g.fillStyle = "rgba(109,183,232,1)";
+    g.fillRect(o[0] - 4, o[1] - 4, 8, 8);
+    g.font = "600 12px system-ui, sans-serif";
+    g.fillText("Радар · " + Math.round(r.range) + " бл.", o[0] + 9, o[1] + 4);
+  }
+}
+
 function pinsFrame() {
   requestAnimationFrame(pinsFrame);
   if (!mapReady) return;
   const now = Date.now();
   if (!cam && now - lastFind > 1000) { cam = findCam(); lastFind = now; }
   camOk = !!cam;
-  if (!cam) { for (const id in pins) pins[id].style.display = "none"; return; }
+  if (!cam) { for (const id in pins) pins[id].style.display = "none"; drawRing(null); return; }
   const V = cam.matrixWorldInverse.elements, P = cam.projectionMatrix.elements;
   const W = $("mapwrap").clientWidth, H = $("mapwrap").clientHeight;
+  drawRing(V, P, W, H);
   const alive = new Set();
   for (const p of state.players) {
     alive.add(p.id);
@@ -294,7 +337,8 @@ function drawRadar(ps) {
   const css = getComputedStyle(document.documentElement);
   const col = (n) => css.getPropertyValue(n).trim();
   g.clearRect(0, 0, w, h);
-  if (!ps.length) return;
+  const rd = state.radar;
+  if (!ps.length && !rd) return;
 
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const p of ps) {
@@ -302,6 +346,10 @@ function drawRadar(ps) {
       minX = Math.min(minX, t.x); maxX = Math.max(maxX, t.x);
       minZ = Math.min(minZ, t.z); maxZ = Math.max(maxZ, t.z);
     }
+  }
+  if (rd) {
+    minX = Math.min(minX, rd.x - rd.range); maxX = Math.max(maxX, rd.x + rd.range);
+    minZ = Math.min(minZ, rd.z - rd.range); maxZ = Math.max(maxZ, rd.z + rd.range);
   }
   const pad = 40;
   const span = Math.max(maxX - minX, maxZ - minZ, 40);
@@ -319,6 +367,12 @@ function drawRadar(ps) {
   g.fillText("С", w - 18, 16);
   g.fillText(`сетка ≈ ${Math.round(w / 4 / sc)} блоков`, 10, h - 10);
 
+  if (rd) {
+    g.strokeStyle = col("--accent"); g.lineWidth = 2; g.setLineDash([8, 5]);
+    g.beginPath(); g.arc(X(rd.x), Z(rd.z), rd.range * sc, 0, Math.PI * 2); g.stroke();
+    g.setLineDash([]);
+    g.fillStyle = col("--accent"); g.fillRect(X(rd.x) - 4, Z(rd.z) - 4, 8, 8);
+  }
   for (const p of ps) {
     const color = p.friend ? col("--ok") : col("--alert");
     g.strokeStyle = color; g.lineWidth = 2;
