@@ -5,8 +5,15 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Радар базы</title>
 <script>
-// never render inside the map frame (prevents a site-inside-site)
-if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw new Error("framed"); }
+// if the site ever lands inside the map frame, send that frame back to the map and show nothing
+if (window.top !== window.self) {
+  try {
+    const t = +sessionStorage.getItem("healAt") || 0;
+    if (Date.now() - t > 10000) { sessionStorage.setItem("healAt", String(Date.now())); location.replace("/map/#world"); }
+  } catch (e) {}
+  document.documentElement.style.display = "none";
+  throw new Error("framed");
+}
 </script>
 <style>
   :root {
@@ -48,7 +55,7 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
   .p img { width: 40px; height: 40px; image-rendering: pixelated; border-radius: 4px; background: var(--line); }
   .p b { display: block; }
   .p.bad b { color: var(--alert); }
-  .p small { color: var(--muted); }
+  .p small { color: var(--muted); white-space: pre-line; overflow-wrap: anywhere; }
   main { display: grid; grid-template-rows: 1fr 240px; min-height: 0; min-width: 0; }
   #mapwrap { position: relative; min-height: 0; border-bottom: 1px solid var(--line); }
   iframe { width: 100%; height: 100%; border: 0; background: var(--line); }
@@ -190,7 +197,7 @@ function render() {
       b.textContent = o.name || o.cat || "Объект";
       const s = document.createElement("small");
       s.textContent = `${o.cat}  ·  x ${Math.floor(o.x)} y ${Math.floor(o.y)} z ${Math.floor(o.z)}  ·  ` +
-        (o.l ? `${fmt(o.l)}×${fmt(o.w)}×${fmt(o.h)} бл.` : "размер неизвестен");
+        (o.l ? `${fmt(o.l)}×${fmt(o.w)}×${fmt(o.h)} бл.` : "размер неизвестен") + (o.info ? `\n${o.info}` : "");
       box.append(b, s);
       row.append(ico, box);
       const pick = () => { selected = o.id; lastCam = null; render(); };
@@ -411,7 +418,13 @@ function moveCamera(p, force) {
     Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 0.4 || Math.abs(lastCam.y - p.y) >= 1;
   if (!force && (!moved || now - lastCamTime < 110)) return;
   try {
-    $("map").contentWindow.location.replace(mapLink(p));
+    const w = $("map").contentWindow;
+    if (!w.location.pathname.startsWith("/map")) {   // frame wandered off the map: reload it once
+      $("map").src = MAP_URL + mapLink(p);
+      lastCamTime = now;
+      return;
+    }
+    w.location.replace(mapLink(p));
     lastCam = { id: p.id, x: p.x, y: p.y, z: p.z };
     lastCamTime = now;
   } catch (e) {}
