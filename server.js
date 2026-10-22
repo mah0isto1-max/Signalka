@@ -7,13 +7,26 @@ const path = require("path");
 const KEY = process.env.KEY || "change-me";
 const PORT = process.env.PORT || 3000;
 const STALE_MS = 10000;
-const TRAIL = 40;
+const TRAIL = 120;
 
 let players = {};      // id -> player
 let trails = {};       // id -> [{x,z}]
 let lastUpdate = 0;
+let objects = [];     // non-player contacts (aircraft, contraptions...)
 let radar = null;     // {x,y,z,range} sent by the computer
 const clients = new Set();
+
+function cleanObjects(list) {
+  if (!Array.isArray(list)) return [];
+  return list.slice(0, 60).map((o) => ({
+    id: String((o && o.id) || "").slice(0, 64),
+    cat: String((o && o.cat) || "").slice(0, 32),
+    name: String((o && o.name) || "").slice(0, 48),
+    x: +(o && o.x) || 0, y: +(o && o.y) || 0, z: +(o && o.z) || 0,
+    vx: +(o && o.vx) || 0, vy: +(o && o.vy) || 0, vz: +(o && o.vz) || 0,
+    w: +(o && o.w) || 0, h: +(o && o.h) || 0, l: +(o && o.l) || 0,
+  })).filter((o) => o.id);
+}
 
 function snapshot() {
   const now = Date.now();
@@ -21,6 +34,7 @@ function snapshot() {
     updated: lastUpdate,
     online: lastUpdate > 0 && now - lastUpdate < STALE_MS,
     radar,
+    objects,
     players: Object.values(players).map((p) => ({ ...p, trail: trails[p.id] || [] })),
   };
 }
@@ -164,6 +178,7 @@ const server = http.createServer((req, res) => {
       try {
         const parsed = JSON.parse(body);
         list = parsed.players;
+        objects = cleanObjects(parsed.objects);
         const r = parsed.radar;
         radar = r && isFinite(+r.x) && isFinite(+r.z) && +r.range > 0
           ? { x: +r.x, y: +r.y || 0, z: +r.z, range: +r.range } : null;
@@ -247,8 +262,9 @@ const server = http.createServer((req, res) => {
 // keep SSE connections alive and mark the feed offline when the computer stops
 setInterval(() => {
   for (const res of clients) res.write(": ping\n\n");
-  if (lastUpdate && Date.now() - lastUpdate > STALE_MS && Object.keys(players).length) {
+  if (lastUpdate && Date.now() - lastUpdate > STALE_MS && (Object.keys(players).length || objects.length)) {
     players = {};
+    objects = [];
     trails = {};
     broadcast();
   }
