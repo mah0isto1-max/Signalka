@@ -435,14 +435,7 @@ function moveCamera(p, force) {
       }
       return;
     }
-    // preferred: move BlueMap's own camera, no URL change at all
-    const cm = w.bluemap && w.bluemap.mapViewer && w.bluemap.mapViewer.controlsManager;
-    if (cm && cm.position && typeof cm.position.set === "function" && realMapId()) {
-      if (!lastCam || lastCam.id !== p.id) cm.distance = CAM_DIST;
-      cm.position.set(p.x, p.y, p.z);
-    } else {
-      w.location.replace(mapLink(p));   // fallback: hash only
-    }
+    w.location.replace(mapLink(p));
     lastCam = { id: p.id, x: p.x, y: p.y, z: p.z };
     lastCamTime = now;
   } catch (e) {}
@@ -547,11 +540,32 @@ async function initMap() {
       }
     }
   } catch (e) { out.push("ошибка: " + e.message); }
-  d.textContent = out.join("\n");
+  d.firstChild && d.firstChild.remove(); d.insertBefore(document.createTextNode(out.join("\n")), d.firstChild);
   d.title = "нажмите, чтобы скрыть";
   d.onclick = () => d.remove();
 }
 $("map").src = MAP_URL + MAP_HASH;
+const frameErrs = [];
+$("map").addEventListener("load", () => {
+  try { $("map").contentWindow.addEventListener("error", (e) => frameErrs.push(String(e.message).slice(0, 80))); } catch (e) { frameErrs.push("нет доступа к окну"); }
+});
+function frameStatus() {
+  const d = $("diag"); if (!d) return;
+  let t = "";
+  try {
+    const w = $("map").contentWindow, doc = w.document;
+    t = "окно: " + w.location.pathname + w.location.hash.slice(0, 40) +
+      "\nBlueMap: " + (w.bluemap ? "есть" : "нет") +
+      "\nкарта: " + (realMapId() || "не выбрана") +
+      "\ncanvas: " + doc.querySelectorAll("canvas").length +
+      "\nтекст: " + (doc.body ? doc.body.innerText.trim().slice(0, 60) : "нет body") +
+      (frameErrs.length ? "\nошибки: " + frameErrs.slice(-3).join(" | ") : "");
+  } catch (e) { t = "окно недоступно: " + e.message; }
+  let el = $("diag2");
+  if (!el) { el = document.createElement("div"); el.id = "diag2"; d.appendChild(el); }
+  el.textContent = "\n" + t;
+}
+setInterval(frameStatus, 1500);
 initMap();
 connect();
 </script>
