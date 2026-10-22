@@ -83,6 +83,7 @@ if (window.top !== window.self) {
     padding: 1px 7px; border-radius: 5px; color: #fff; background: var(--c, #ff6b55); }
   @keyframes spin { from { transform: rotateX(-25deg) rotateY(0deg); } to { transform: rotateX(-25deg) rotateY(360deg); } }
   @media (prefers-reduced-motion: reduce) { .cube { animation: none; transform: rotateX(-25deg) rotateY(25deg); } }
+  #diag { position: absolute; left: 8px; bottom: 8px; z-index: 7; max-width: 60%; background: rgba(0,0,0,.75); color: #cfe; font: 11px/1.4 monospace; padding: 6px 8px; border-radius: 6px; white-space: pre-wrap; pointer-events: auto; }
   #radar { width: 100%; height: 100%; display: block; background: var(--panel); }
   @media (max-width: 800px) {
     body { grid-template-columns: 1fr; grid-template-rows: auto 220px 1fr; }
@@ -106,6 +107,7 @@ if (window.top !== window.self) {
     <iframe id="map" title="3D-карта сервера" allowfullscreen></iframe>
     <canvas id="ring"></canvas>
     <div id="pins"></div>
+    <div id="diag">проверка карты…</div>
     <div id="pin"><div class="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div><div id="pinlabel"></div></div>
     <div id="tools">
       <label><input type="checkbox" id="follow" checked> Камера следует за игроком</label>
@@ -118,7 +120,7 @@ if (window.top !== window.self) {
 <script>
 // ---- settings: change these two lines ----
 const MAP_URL = "/map/";
-const MAP_HASH = "#world";
+let MAP_HASH = "#world";
 const BANDIT = "data:image/svg+xml," + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" shape-rendering="crispEdges">' +
   '<rect width="8" height="8" fill="#c4906b"/><rect width="8" height="2" fill="#3a2a1f"/>' +
@@ -135,8 +137,13 @@ let state = { players: [], objects: [], online: false };
 let selected = null;
 let lastCam = null, lastCamTime = 0, mapReady = false;
 
+function realMapId() {
+  try { return $("map").contentWindow.bluemap.mapViewer.map.data.id || null; } catch (e) { return null; }
+}
 function mapLink(p) {
-  return `${MAP_HASH}:${Math.round(p.x)}:${Math.round(p.y)}:${Math.round(p.z)}:${CAM_DIST}:0:0:0:0:perspective`;
+  const id = realMapId();
+  const base = id ? "#" + id : MAP_HASH;
+  return `${base}:${Math.round(p.x)}:${Math.round(p.y)}:${Math.round(p.z)}:${CAM_DIST}:0:0:0:0:perspective`;
 }
 
 function render() {
@@ -421,11 +428,21 @@ function moveCamera(p, force) {
   try {
     const w = $("map").contentWindow;
     if (!w.location.pathname.startsWith("/map")) {   // frame wandered off the map: reload it once
-      $("map").src = MAP_URL + mapLink(p);
       lastCamTime = now;
+      if (now - (window.__lastReload || 0) > 30000) {   // never reload the map more than once per 30 s
+        window.__lastReload = now;
+        $("map").src = MAP_URL + mapLink(p);
+      }
       return;
     }
-    w.location.replace(mapLink(p));
+    // preferred: move BlueMap's own camera, no URL change at all
+    const cm = w.bluemap && w.bluemap.mapViewer && w.bluemap.mapViewer.controlsManager;
+    if (cm && cm.position && typeof cm.position.set === "function" && realMapId()) {
+      if (!lastCam || lastCam.id !== p.id) cm.distance = CAM_DIST;
+      cm.position.set(p.x, p.y, p.z);
+    } else {
+      w.location.replace(mapLink(p));   // fallback: hash only
+    }
     lastCam = { id: p.id, x: p.x, y: p.y, z: p.z };
     lastCamTime = now;
   } catch (e) {}
@@ -510,7 +527,32 @@ function connect() {
 window.addEventListener("resize", () => drawRadar(state.players));
 $("follow").addEventListener("change", () => { lastCam = null; render(); });
 $("map").addEventListener("load", () => { mapReady = true; cam = null; lastFind = 0; lastCam = null; render(); });
-$("map").src = MAP_URL + MAP_HASH;
+async function initMap() {
+  const d = $("diag"), out = [];
+  const get = async (u) => {
+    try { const r = await fetch(u, { cache: "no-store" }); return { u, s: r.status, r }; }
+    catch (e) { return { u, s: "ERR " + e.message }; }
+  };
+  try {
+    const a = await get(MAP_URL + "settings.json");
+    out.push(a.u + " -> " + a.s);
+    let ids = [];
+    if (a.s === 200) { try { const j = await a.r.json(); ids = j.maps || []; } catch (e) { out.push("settings.json не JSON"); } }
+    out.push("карты: " + (ids.join(", ") || "не найдены"));
+    if (ids.length) {
+      if (!ids.includes(MAP_HASH.slice(1))) MAP_HASH = "#" + ids[0];
+      for (const f of ["settings.json", "textures.json", "live/markers.json"]) {
+        const b = await get(`${MAP_URL}maps/${ids[0]}/${f}`);
+        out.push(`maps/${ids[0]}/${f} -> ${b.s}`);
+      }
+    }
+  } catch (e) { out.push("ошибка: " + e.message); }
+  d.textContent = out.join("\n");
+  d.title = "нажмите, чтобы скрыть";
+  d.onclick = () => d.remove();
+  $("map").src = MAP_URL + MAP_HASH;
+}
+initMap();
 connect();
 </script>
 </body>
