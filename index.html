@@ -67,6 +67,8 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
   .cube i:nth-child(4) { transform: rotateY(-90deg) translateZ(18px); }
   .cube i:nth-child(5) { transform: rotateX(90deg) translateZ(18px); }
   .cube i:nth-child(6) { transform: rotateX(-90deg) translateZ(18px); }
+  .p .ico { width: 40px; height: 40px; border-radius: 4px; background: var(--line); color: #ffb347; font-size: 24px; display: grid; place-items: center; }
+  .sec { padding: 6px 16px; font-size: 12px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); border-bottom: 1px solid var(--line); }
   #ring { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 3; }
   #pins { position: absolute; inset: 0; pointer-events: none; overflow: hidden; z-index: 4; }
   .pp { position: absolute; left: 0; top: 0; width: 0; height: 0; perspective: 400px; will-change: transform; }
@@ -122,12 +124,12 @@ const CAM_DIST = 150;
 // ------------------------------------------
 
 const $ = (id) => document.getElementById(id);
-let state = { players: [], online: false };
+let state = { players: [], objects: [], online: false };
 let selected = null;
 let lastCam = null, lastCamTime = 0, mapReady = false;
 
 function mapLink(p) {
-  return `${MAP_HASH}:${Math.floor(p.x)}:${Math.floor(p.y)}:${Math.floor(p.z)}:${CAM_DIST}:0:0:0:0:perspective`;
+  return `${MAP_HASH}:${(+p.x).toFixed(1)}:${(+p.y).toFixed(1)}:${(+p.z).toFixed(1)}:${CAM_DIST}:0:0:0:0:perspective`;
 }
 
 function render() {
@@ -138,13 +140,14 @@ function render() {
   const list = $("list");
   list.textContent = "";
   const ps = state.players.slice().sort((a, b) => a.friend - b.friend);
-  if (!ps.length) {
+  const os = state.objects || [];
+  if (!ps.length && !os.length) {
     const d = document.createElement("div");
     d.className = "empty";
     d.textContent = state.online ? "В зоне радара никого нет." : "Ждём данные от радара…";
     list.appendChild(d);
   }
-  if (selected && !ps.find((p) => p.id === selected)) selected = null;
+  if (selected && !ps.find((p) => p.id === selected) && !os.find((o) => o.id === selected)) selected = null;
   if (!selected) {
     const bad = ps.find((p) => !p.friend) || ps[0];
     if (bad) selected = bad.id;
@@ -170,16 +173,68 @@ function render() {
     list.appendChild(row);
   }
 
-  // camera follows selected player: the map is loaded once, only the #hash changes
-  const sel = ps.find((p) => p.id === selected);
-  if (sel) {
-    $("open").href = MAP_URL + mapLink(sel);
-    moveCamera(sel);
-  } else {
-    $("open").href = MAP_URL;
+  if (os.length) {
+    const sec = document.createElement("div");
+    sec.className = "sec";
+    sec.textContent = "Объекты";
+    list.appendChild(sec);
+    for (const o of os) {
+      const row = document.createElement("div");
+      row.className = "p" + (o.id === selected ? " sel" : "");
+      row.tabIndex = 0;
+      const ico = document.createElement("div");
+      ico.className = "ico";
+      ico.textContent = "▣";
+      const box = document.createElement("div");
+      const b = document.createElement("b");
+      b.textContent = o.name || o.cat || "Объект";
+      const s = document.createElement("small");
+      s.textContent = `${o.cat}  ·  x ${Math.floor(o.x)} y ${Math.floor(o.y)} z ${Math.floor(o.z)}  ·  ` +
+        (o.l ? `${fmt(o.l)}×${fmt(o.w)}×${fmt(o.h)} бл.` : "размер неизвестен");
+      box.append(b, s);
+      row.append(ico, box);
+      const pick = () => { selected = o.id; lastCam = null; render(); };
+      row.onclick = pick;
+      row.onkeydown = (e) => { if (e.key === "Enter") pick(); };
+      list.appendChild(row);
+    }
   }
+
+  // the camera itself is moved from the animation loop (pinsFrame), smoothly
+  const sel = ps.find((p) => p.id === selected) || os.find((o) => o.id === selected);
+  $("open").href = sel ? MAP_URL + mapLink(sel) : MAP_URL;
   drawRadar(ps);
   updatePin();
+}
+
+const fmt = (n) => Math.round(n * 10) / 10;
+
+// ---- smooth motion: extrapolate from the last two radar updates, then ease toward it ----
+const T = {}, disp = {};
+let cur = {}, lastFrameT = performance.now();
+
+function track(list) {
+  const t = performance.now(), ids = new Set();
+  for (const e of list) {
+    ids.add(e.id);
+    const r = T[e.id];
+    if (!r) T[e.id] = { x: e.x, y: e.y, z: e.z, t, px: e.x, py: e.y, pz: e.z, pt: t - 300 };
+    else { r.px = r.x; r.py = r.y; r.pz = r.z; r.pt = r.t; r.x = e.x; r.y = e.y; r.z = e.z; r.t = t; }
+  }
+  for (const id of Object.keys(T)) if (!ids.has(id)) { delete T[id]; delete disp[id]; }
+}
+
+function getPos(id, now, fdt) {
+  const r = T[id];
+  if (!r) return null;
+  const dt = Math.max((r.t - r.pt) / 1000, 0.05);
+  const ahead = Math.min((now - r.t) / 1000, 0.45);
+  const tx = r.x + ((r.x - r.px) / dt) * ahead, ty = r.y + ((r.y - r.py) / dt) * ahead, tz = r.z + ((r.z - r.pz) / dt) * ahead;
+  let d = disp[id];
+  if (!d || Math.abs(tx - d.x) + Math.abs(tz - d.z) > 40) d = disp[id] = { x: tx, y: ty, z: tz };
+  const k = 1 - Math.exp(-fdt / 0.06);
+  d.x += (tx - d.x) * k; d.y += (ty - d.y) * k; d.z += (tz - d.z) * k;
+  return d;
 }
 
 // ---- pins anchored to the world: project player coordinates with the map's own camera ----
@@ -220,13 +275,14 @@ function drawRing(V, P, W, H) {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.clearRect(0, 0, W, H);
   const r = state.radar;
-  if (!V || !r) return;
+  if (!V) return;
   const pr = (x, y, z) => {
     const vx = V[0]*x + V[4]*y + V[8]*z + V[12], vy = V[1]*x + V[5]*y + V[9]*z + V[13], vz = V[2]*x + V[6]*y + V[10]*z + V[14];
     const cx = P[0]*vx + P[4]*vy + P[8]*vz + P[12], cy = P[1]*vx + P[5]*vy + P[9]*vz + P[13];
     const cw = P[3]*vx + P[7]*vy + P[11]*vz + P[15];
     return cw > 0 ? [(cx / cw * 0.5 + 0.5) * W, (1 - (cy / cw * 0.5 + 0.5)) * H] : null;
   };
+  if (r) {
   const N = 96, pts = [];
   for (let i = 0; i <= N; i++) {
     const a = (i / N) * Math.PI * 2;
@@ -251,12 +307,45 @@ function drawRing(V, P, W, H) {
     g.font = "600 12px system-ui, sans-serif";
     g.fillText("Радар · " + Math.round(r.range) + " бл.", o[0] + 9, o[1] + 4);
   }
+  }
+  drawObjects(g, pr);
+}
+
+function drawObjects(g, pr) {
+  const E = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  const C = [[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];
+  for (const o of state.objects || []) {
+    const q = cur[o.id] || o;
+    const known = o.l > 0 && o.w > 0 && o.h > 0;
+    const l = known ? o.l : 4, w = known ? o.w : 4, h = known ? o.h : 3;
+    const ang = Math.hypot(o.vx, o.vz) > 0.5 ? Math.atan2(o.vz, o.vx) : 0;
+    const ca = Math.cos(ang), sa = Math.sin(ang);
+    const pts = C.map(([a, b, c]) => {
+      const u = a * l / 2, v = b * w / 2;
+      return pr(q.x + u * ca - v * sa, q.y + c * h / 2, q.z + u * sa + v * ca);
+    });
+    g.strokeStyle = "#ffb347"; g.lineWidth = 2; g.setLineDash(known ? [] : [6, 4]);
+    g.beginPath();
+    for (const [i, j] of E) if (pts[i] && pts[j]) { g.moveTo(pts[i][0], pts[i][1]); g.lineTo(pts[j][0], pts[j][1]); }
+    g.stroke(); g.setLineDash([]);
+    const top = pr(q.x, q.y + h / 2, q.z);
+    if (top) {
+      g.fillStyle = "#ffb347"; g.font = "600 12px system-ui, sans-serif";
+      g.fillText(`${o.name || o.cat} ${known ? "" : "≈"}${fmt(l)}×${fmt(w)}×${fmt(h)}`, top[0] + 8, top[1] - 6);
+    }
+  }
 }
 
 function pinsFrame() {
   requestAnimationFrame(pinsFrame);
   if (!mapReady) return;
-  const now = Date.now();
+  const now = Date.now(), pn = performance.now();
+  const fdt = Math.min((pn - lastFrameT) / 1000, 0.1);
+  lastFrameT = pn;
+  cur = {};
+  for (const e of state.players.concat(state.objects || [])) { const q = getPos(e.id, pn, fdt); if (q) cur[e.id] = q; }
+  const se = selected && cur[selected];
+  if (se) moveCamera({ id: selected, x: se.x, y: se.y, z: se.z });
   if (!cam && now - lastFind > 1000) { cam = findCam(); lastFind = now; }
   camOk = !!cam;
   if (!cam) { for (const id in pins) pins[id].style.display = "none"; drawRing(null); return; }
@@ -267,7 +356,8 @@ function pinsFrame() {
   for (const p of state.players) {
     alive.add(p.id);
     const el = pins[p.id] || (pins[p.id] = makePin());
-    const x = p.x, y = p.y + 2, z = p.z;
+    const q = cur[p.id] || p;
+    const x = q.x, y = q.y + 2, z = q.z;
     const vx = V[0]*x + V[4]*y + V[8]*z + V[12];
     const vy = V[1]*x + V[5]*y + V[9]*z + V[13];
     const vz = V[2]*x + V[6]*y + V[10]*z + V[14];
@@ -318,10 +408,10 @@ function moveCamera(p, force) {
   if (!mapReady || !$("follow").checked) return;
   const now = Date.now();
   const moved = !lastCam || lastCam.id !== p.id ||
-    Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 1 || Math.abs(lastCam.y - p.y) >= 2;
-  if (!force && (!moved || now - lastCamTime < 400)) return;
+    Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 0.4 || Math.abs(lastCam.y - p.y) >= 1;
+  if (!force && (!moved || now - lastCamTime < 110)) return;
   try {
-    $("map").contentWindow.location.hash = mapLink(p);
+    $("map").contentWindow.location.replace(mapLink(p));
     lastCam = { id: p.id, x: p.x, y: p.y, z: p.z };
     lastCamTime = now;
   } catch (e) {}
@@ -338,7 +428,8 @@ function drawRadar(ps) {
   const col = (n) => css.getPropertyValue(n).trim();
   g.clearRect(0, 0, w, h);
   const rd = state.radar;
-  if (!ps.length && !rd) return;
+  const os = state.objects || [];
+  if (!ps.length && !rd && !os.length) return;
 
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const p of ps) {
@@ -346,6 +437,10 @@ function drawRadar(ps) {
       minX = Math.min(minX, t.x); maxX = Math.max(maxX, t.x);
       minZ = Math.min(minZ, t.z); maxZ = Math.max(maxZ, t.z);
     }
+  }
+  for (const o of os) {
+    minX = Math.min(minX, o.x - 4); maxX = Math.max(maxX, o.x + 4);
+    minZ = Math.min(minZ, o.z - 4); maxZ = Math.max(maxZ, o.z + 4);
   }
   if (rd) {
     minX = Math.min(minX, rd.x - rd.range); maxX = Math.max(maxX, rd.x + rd.range);
@@ -373,6 +468,13 @@ function drawRadar(ps) {
     g.setLineDash([]);
     g.fillStyle = col("--accent"); g.fillRect(X(rd.x) - 4, Z(rd.z) - 4, 8, 8);
   }
+  for (const o of os) {
+    const ow = Math.max(6, (o.l || 4) * sc), oh = Math.max(6, (o.w || 4) * sc);
+    g.strokeStyle = "#ffb347"; g.lineWidth = 2;
+    g.strokeRect(X(o.x) - ow / 2, Z(o.z) - oh / 2, ow, oh);
+    g.fillStyle = "#ffb347"; g.font = "12px system-ui, sans-serif";
+    g.fillText(o.name || o.cat, X(o.x) + ow / 2 + 4, Z(o.z) + 4);
+  }
   for (const p of ps) {
     const color = p.friend ? col("--ok") : col("--alert");
     g.strokeStyle = color; g.lineWidth = 2;
@@ -388,7 +490,7 @@ function drawRadar(ps) {
 
 function connect() {
   const es = new EventSource("/api/stream");
-  es.onmessage = (e) => { state = JSON.parse(e.data); render(); };
+  es.onmessage = (e) => { state = JSON.parse(e.data); state.objects = state.objects || []; track(state.players.concat(state.objects)); render(); };
   es.onerror = () => { state.online = false; render(); };
 }
 window.addEventListener("resize", () => drawRadar(state.players));
