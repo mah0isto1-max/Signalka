@@ -84,6 +84,20 @@ if (window.top !== window.self) {
   @keyframes spin { from { transform: rotateX(-25deg) rotateY(0deg); } to { transform: rotateX(-25deg) rotateY(360deg); } }
   @media (prefers-reduced-motion: reduce) { .cube { animation: none; transform: rotateX(-25deg) rotateY(25deg); } }
   #diag { position: absolute; left: 8px; bottom: 8px; z-index: 7; max-width: 60%; background: rgba(0,0,0,.75); color: #cfe; font: 11px/1.4 monospace; padding: 6px 8px; border-radius: 6px; white-space: pre-wrap; pointer-events: auto; }
+  #tabs { display: flex; gap: 6px; margin-left: 16px; }
+  .tab { font: inherit; font-size: 14px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
+  .tab.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #console { position: fixed; left: 0; right: 0; bottom: 0; top: 45px; z-index: 20; background: var(--bg); display: none; flex-direction: column; gap: 10px; padding: 12px 16px; }
+  #console.on { display: flex; }
+  #clog { flex: 1; min-height: 0; overflow: auto; background: #0b0f0d; color: #cfe8d6; border: 1px solid var(--line); border-radius: 6px; padding: 10px; font: 13px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #clog .in { color: #7ec8ff; }
+  #clog .err { color: #ff9b8a; }
+  #cform { display: flex; gap: 8px; }
+  #cline { flex: 1; font: 14px ui-monospace, Consolas, monospace; padding: 8px 10px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+  #cform button, .qk { font: inherit; font-size: 14px; padding: 6px 14px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); cursor: pointer; }
+  #cform button.go { background: var(--accent); border-color: var(--accent); color: #fff; }
+  #cquick { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+  #cstat { margin-left: auto; font-size: 13px; color: var(--muted); }
   #radar { width: 100%; height: 100%; display: block; background: var(--panel); }
   @media (max-width: 800px) {
     body { grid-template-columns: 1fr; grid-template-rows: auto 220px 1fr; }
@@ -95,6 +109,7 @@ if (window.top !== window.self) {
 <body>
 <header>
   <h1>Радар базы</h1>
+  <nav id="tabs"><button class="tab on" data-t="radar">Радар</button><button class="tab" data-t="console">Консоль</button></nav>
   <div id="status"><span id="dot"></span><span id="stxt">Подключение…</span></div>
 </header>
 
@@ -116,6 +131,17 @@ if (window.top !== window.self) {
   </div>
   <canvas id="radar"></canvas>
 </main>
+
+<section id="console">
+  <div id="cquick">
+    <button class="qk" data-c="help">help</button><button class="qk" data-c="list">list</button>
+    <button class="qk" data-c="tracks">tracks</button><button class="qk" data-c="radar">radar</button>
+    <button class="qk" data-c="objects">objects</button><button class="qk" data-c="size">size</button>
+    <span id="cstat">…</span>
+  </div>
+  <div id="clog"></div>
+  <form id="cform" autocomplete="off"><input id="cline" placeholder="Команда для компьютера, например: add Ник" spellcheck="false"><button class="go" type="submit">Отправить</button></form>
+</section>
 
 <script>
 // ---- settings: change these two lines ----
@@ -178,7 +204,7 @@ function render() {
     const b = document.createElement("b");
     b.textContent = p.friend ? p.name : "Чужой";
     const s = document.createElement("small");
-    s.textContent = `x ${Math.floor(p.x)}  y ${Math.floor(p.y)}  z ${Math.floor(p.z)}` + (p.friend ? "" : `  ·  ${p.id.slice(0, 8)}`);
+    s.textContent = `x ${Math.floor(p.x)}  y ${Math.floor(p.y)}  z ${Math.floor(p.z)}` + (p.friend ? "" : `  ·  ${p.id.slice(0, 8)}`) + (distR(p) != null ? `  ·  ${distR(p)} бл. от радара` : "");
     box.append(b, s);
     row.append(img, box);
     const pick = () => { selected = p.id; lastCam = null; render(); };
@@ -204,7 +230,7 @@ function render() {
       b.textContent = short(o.name) || o.cat || "Объект";
       const s = document.createElement("small");
       s.textContent = `${o.cat}  ·  x ${Math.floor(o.x)} y ${Math.floor(o.y)} z ${Math.floor(o.z)}  ·  ` +
-        (o.l ? `${fmt(o.l)}×${fmt(o.w)}×${fmt(o.h)} бл.` : "размер неизвестен") + (o.info ? `\n${o.info}` : "");
+        (o.l ? `${fmt(o.l)}×${fmt(o.w)}×${fmt(o.h)} бл.` : "размер неизвестен") + (distR(o) != null ? `  ·  ${distR(o)} бл. от радара` : "") + (o.info ? `\n${o.info}` : "");
       box.append(b, s);
       row.append(ico, box);
       const pick = () => { selected = o.id; lastCam = null; render(); };
@@ -221,10 +247,16 @@ function render() {
   updatePin();
 }
 
+function distR(e) {
+  const r = state.radar;
+  if (!r || !e) return null;
+  const d = Math.round(Math.hypot(e.x - r.x, e.y - r.y, e.z - r.z));
+  return isFinite(d) ? d : null;
+}
 const short = (n) => String(n || "").replace(/^entity\.[a-z_]+\./, "");
 const fmt = (n) => Math.round(n * 10) / 10;
 
-// ---- smooth motion: extrapolate from the last two radar updates, then ease toward it ----
+// ---- latest radar positions ----
 const T = {}, disp = {};
 let cur = {}, lastFrameT = performance.now();
 
@@ -239,17 +271,9 @@ function track(list) {
   for (const id of Object.keys(T)) if (!ids.has(id)) { delete T[id]; delete disp[id]; }
 }
 
-function getPos(id, now, fdt) {
+function getPos(id) {
   const r = T[id];
-  if (!r) return null;
-  const dt = Math.max((r.t - r.pt) / 1000, 0.05);
-  const ahead = Math.min((now - r.t) / 1000, 0.45);
-  const tx = r.x + ((r.x - r.px) / dt) * ahead, ty = r.y + ((r.y - r.py) / dt) * ahead, tz = r.z + ((r.z - r.pz) / dt) * ahead;
-  let d = disp[id];
-  if (!d || Math.abs(tx - d.x) + Math.abs(tz - d.z) > 40) d = disp[id] = { x: tx, y: ty, z: tz };
-  const k = 1 - Math.exp(-fdt / 0.06);
-  d.x += (tx - d.x) * k; d.y += (ty - d.y) * k; d.z += (tz - d.z) * k;
-  return d;
+  return r ? { x: r.x, y: r.y, z: r.z } : null;   // exactly what the radar last reported, no prediction
 }
 
 // ---- pins anchored to the world: project player coordinates with the map's own camera ----
@@ -346,7 +370,7 @@ function drawObjects(g, pr) {
     const top = pr(q.x, q.y + h / 2, q.z);
     if (top) {
       g.fillStyle = "#ffb347"; g.font = "600 12px system-ui, sans-serif";
-      g.fillText(`${short(o.name) || o.cat} ${known ? "" : "≈"}${fmt(l)}×${fmt(w)}×${fmt(h)}`, top[0] + 8, top[1] - 6);
+      g.fillText(`${short(o.name) || o.cat} ${known ? "" : "≈"}${fmt(l)}×${fmt(w)}×${fmt(h)}${distR(q) != null ? " · " + distR(q) + " бл." : ""}`, top[0] + 8, top[1] - 6);
     }
   }
 }
@@ -358,7 +382,7 @@ function pinsFrame() {
   const fdt = Math.min((pn - lastFrameT) / 1000, 0.1);
   lastFrameT = pn;
   cur = {};
-  for (const e of state.players.concat(state.objects || [])) { const q = getPos(e.id, pn, fdt); if (q) cur[e.id] = q; }
+  for (const e of state.players.concat(state.objects || [])) { const q = getPos(e.id); if (q) cur[e.id] = q; }
   const se = selected && cur[selected];
   if (se) moveCamera({ id: selected, x: se.x, y: se.y, z: se.z });
   if (!cam && now - lastFind > 1000) { cam = findCam(); lastFind = now; }
@@ -389,7 +413,9 @@ function pinsFrame() {
       el.querySelectorAll(".cube i").forEach((f) => { f.style.backgroundImage = `url("${src}")`; });
     }
     el.style.setProperty("--c", p.friend ? "#5fc58a" : "#ff6b55");
-    el.querySelector(".pl").textContent = p.friend ? p.name : "Чужой " + p.id.slice(0, 4);
+    const dr = distR(q), lbl = (p.friend ? p.name : "Чужой " + p.id.slice(0, 4)) + (dr != null ? " · " + dr + " бл." : "");
+    const pl = el.querySelector(".pl");
+    if (pl.textContent !== lbl) pl.textContent = lbl;
   }
   for (const id in pins) if (!alive.has(id)) { pins[id].remove(); delete pins[id]; }
 }
@@ -424,7 +450,7 @@ function moveCamera(p, force) {
   const now = Date.now();
   const moved = !lastCam || lastCam.id !== p.id ||
     Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 1 || Math.abs(lastCam.y - p.y) >= 2;
-  if (!force && (!moved || now - lastCamTime < 250)) return;
+  if (!force && (!moved || now - lastCamTime < 120)) return;
   try {
     const w = $("map").contentWindow;
     if (!w.location.pathname.startsWith("/map")) {   // frame wandered off the map: reload it once
@@ -520,6 +546,55 @@ function connect() {
 window.addEventListener("resize", () => drawRadar(state.players));
 $("follow").addEventListener("change", () => { lastCam = null; render(); });
 $("map").addEventListener("load", () => { mapReady = true; cam = null; lastFind = 0; lastCam = null; render(); });
+// ---- remote console ----
+let cSince = 0, cTimer = null;
+const cHist = []; let cHi = 0;
+function cAppend(kind, text) {
+  const log = $("clog"), near = log.scrollHeight - log.scrollTop - log.clientHeight < 40;
+  const d = document.createElement("div");
+  if (kind) d.className = kind;
+  d.textContent = (kind === "in" ? "> " : "") + text;
+  log.appendChild(d);
+  if (near) log.scrollTop = log.scrollHeight;
+}
+async function cPoll() {
+  try {
+    const r = await fetch("/api/console?since=" + cSince, { cache: "no-store" });
+    if (r.status === 401) { location.reload(); return; }
+    const j = await r.json();
+    for (const e of j.entries) cAppend(e.kind, e.text);
+    cSince = j.n;
+    $("cstat").textContent = j.online ? "компьютер на связи" : "компьютер не на связи";
+  } catch (e) {}
+}
+async function cSend(line) {
+  line = line.trim();
+  if (!line) return;
+  cHist.push(line); cHi = cHist.length;
+  try {
+    const r = await fetch("/api/cmd", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ line }) });
+    if (r.status === 401) { location.reload(); return; }
+    if (!r.ok) { const j = await r.json().catch(() => ({})); cAppend("err", j.error || "ошибка " + r.status); return; }
+  } catch (e) { cAppend("err", "нет связи с сайтом"); return; }
+  cPoll(); setTimeout(cPoll, 500); setTimeout(cPoll, 1200);
+}
+function setTab(t) {
+  const on = t === "console";
+  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+  $("console").classList.toggle("on", on);
+  $("console").style.top = document.querySelector("header").offsetHeight + "px";
+  clearInterval(cTimer);
+  if (on) { cPoll(); cTimer = setInterval(cPoll, 1000); $("cline").focus(); }
+}
+document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => setTab(b.dataset.t)));
+document.querySelectorAll(".qk").forEach((b) => (b.onclick = () => { $("cline").value = b.dataset.c + " "; $("cline").focus(); if (["help", "list", "tracks", "radar", "objects", "size"].includes(b.dataset.c)) { $("cline").value = ""; cSend(b.dataset.c); } }));
+$("cform").addEventListener("submit", (e) => { e.preventDefault(); const v = $("cline").value; $("cline").value = ""; cSend(v); });
+$("cline").addEventListener("keydown", (e) => {
+  if (e.key === "ArrowUp" && cHist.length) { cHi = Math.max(0, cHi - 1); $("cline").value = cHist[cHi]; e.preventDefault(); }
+  else if (e.key === "ArrowDown" && cHist.length) { cHi = Math.min(cHist.length, cHi + 1); $("cline").value = cHist[cHi] || ""; e.preventDefault(); }
+});
+window.addEventListener("resize", () => { if ($("console").classList.contains("on")) $("console").style.top = document.querySelector("header").offsetHeight + "px"; });
+
 async function initMap() {
   const d = $("diag"), out = [];
   const get = async (u) => {
