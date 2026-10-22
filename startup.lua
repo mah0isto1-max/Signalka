@@ -142,6 +142,24 @@ local function cmdAdd(arg)
   print("Added: " .. nick)
 end
 
+local function cmdAddId(nick)
+  if not nick or nick == "" then print("Usage: addid <nick>") return end
+  local r, err = http.get("https://api.mojang.com/users/profiles/minecraft/" .. textutils.urlEncode(nick))
+  if not r then print("Mojang error: " .. tostring(err)) return end
+  local body = r.readAll()
+  r.close()
+  local j = textutils.unserializeJSON(body)
+  if not j or not j.id then print("Player not found: " .. nick) return end
+  local hex = j.id:lower()
+  local id = hex:gsub("(%x%x%x%x%x%x%x%x)(%x%x%x%x)(%x%x%x%x)(%x%x%x%x)(%x+)", "%1-%2-%3-%4-%5")
+  for sid in pairs(seen) do
+    if sid:lower():gsub("%-", "") == hex then id = sid end
+  end
+  data.friends[id] = j.name or nick
+  save()
+  print("Added: " .. (j.name or nick) .. "  " .. id)
+end
+
 local function cmdList()
   local any = false
   for id, nick in pairs(data.friends) do
@@ -165,6 +183,7 @@ end
 
 local function help()
   print("add [nick] - add friend (stand near radar)")
+  print("addid <nick> - add friend by nick (player can be offline)")
   print("list - show friends")
   print("del <nick> - remove friend")
   print("webhook <url> - set webhook")
@@ -181,6 +200,7 @@ local function cmdLoop()
     local line = read()
     local cmd, arg = line:match("^(%S+)%s*(.-)$")
     if cmd == "add" then cmdAdd(arg)
+    elseif cmd == "addid" then cmdAddId(arg)
     elseif cmd == "list" then cmdList()
     elseif cmd == "del" then cmdDel(arg)
     elseif cmd == "webhook" then
