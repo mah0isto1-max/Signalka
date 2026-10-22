@@ -39,6 +39,14 @@ function readBody(req, cb) {
 
 const MAP_ORIGIN = new URL(process.env.MAP_ORIGIN || "http://mc.vestalis.xyz:25971");
 
+const seenPaths = {}; // path -> {status, n, last}
+function noteMapPath(p, status) {
+  const k = p.split("?")[0];
+  if (/\/tiles\//.test(k)) return;
+  const e = (seenPaths[k] = seenPaths[k] || { n: 0 });
+  e.n++; e.status = status; e.last = new Date().toISOString();
+}
+
 // Reverse proxy: serves the map from our own https origin so the page can
 // move the camera inside the iframe without reloading it.
 function proxyMap(req, res, upPath) {
@@ -48,6 +56,7 @@ function proxyMap(req, res, upPath) {
   const up = http.request(
     { host: MAP_ORIGIN.hostname, port: MAP_ORIGIN.port || 80, method: req.method, path: upPath, headers },
     (ur) => {
+      noteMapPath(upPath, ur.statusCode);
       const h = { ...ur.headers };
       delete h["x-frame-options"];
       delete h["content-security-policy"];
@@ -110,9 +119,11 @@ function serveMarkers(req, res, upPath) {
   };
   const headers = { ...req.headers, host: MAP_ORIGIN.host, "accept-encoding": "identity" };
   delete headers.referer; delete headers.origin;
+  delete headers["if-none-match"]; delete headers["if-modified-since"];
   const up = http.request(
     { host: MAP_ORIGIN.hostname, port: MAP_ORIGIN.port || 80, method: "GET", path: upPath, headers },
     (ur) => {
+      noteMapPath(upPath + " [merged]", ur.statusCode);
       let buf = "";
       ur.setEncoding("utf8");
       ur.on("data", (c) => (buf += c));
@@ -137,7 +148,7 @@ const server = http.createServer((req, res) => {
   }
   if (url.pathname.startsWith("/map/")) {
     const up = url.pathname.slice(4) + url.search;
-    if (/^\/maps\/[^/]+\/live\/markers\.json$/.test(url.pathname.slice(4))) return serveMarkers(req, res, up);
+    if (/^\/maps\/[^/]+\/(live\/)?markers?\.json$/.test(url.pathname.slice(4))) return serveMarkers(req, res, up);
     return proxyMap(req, res, up);
   }
 
@@ -183,6 +194,15 @@ const server = http.createServer((req, res) => {
       res.writeHead(200);
       res.end("ok");
     });
+  }
+
+  if (url.pathname === "/api/debug") {
+    if (url.searchParams.get("key") !== KEY) {
+      res.writeHead(403);
+      return res.end("bad key");
+    }
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ players: Object.keys(players).length, mapPaths: seenPaths, markers: guardMarkerSet() }, null, 1));
   }
 
   if (url.pathname === "/api/state") {
