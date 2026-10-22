@@ -12,6 +12,7 @@ const TRAIL = 40;
 let players = {};      // id -> player
 let trails = {};       // id -> [{x,z}]
 let lastUpdate = 0;
+let radar = null;     // {x,y,z,range} sent by the computer
 const clients = new Set();
 
 function snapshot() {
@@ -19,6 +20,7 @@ function snapshot() {
   return {
     updated: lastUpdate,
     online: lastUpdate > 0 && now - lastUpdate < STALE_MS,
+    radar,
     players: Object.values(players).map((p) => ({ ...p, trail: trails[p.id] || [] })),
   };
 }
@@ -160,11 +162,17 @@ const server = http.createServer((req, res) => {
     return readBody(req, (body) => {
       let list;
       try {
-        list = JSON.parse(body).players;
+        const parsed = JSON.parse(body);
+        list = parsed.players;
+        const r = parsed.radar;
+        radar = r && isFinite(+r.x) && isFinite(+r.z) && +r.range > 0
+          ? { x: +r.x, y: +r.y || 0, z: +r.z, range: +r.range } : null;
       } catch (e) {
         res.writeHead(400);
         return res.end("bad json");
       }
+      // old CC versions turn an empty table into {} instead of []
+      if (list == null || (typeof list === "object" && !Array.isArray(list) && !Object.keys(list).length)) list = [];
       if (!Array.isArray(list)) {
         res.writeHead(400);
         return res.end("bad data");
