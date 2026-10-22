@@ -90,6 +90,14 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
 // ---- settings: change these two lines ----
 const MAP_URL = "/map/";
 const MAP_HASH = "#world";
+const BANDIT = "data:image/svg+xml," + encodeURIComponent(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 8 8" shape-rendering="crispEdges">' +
+  '<rect width="8" height="8" fill="#c4906b"/><rect width="8" height="2" fill="#3a2a1f"/>' +
+  '<rect y="2" width="1" height="1" fill="#3a2a1f"/><rect x="7" y="2" width="1" height="1" fill="#3a2a1f"/>' +
+  '<rect y="3" width="8" height="2" fill="#1c1c1c"/>' +
+  '<rect x="1" y="4" width="2" height="1" fill="#fff"/><rect x="2" y="4" width="1" height="1" fill="#c4321f"/>' +
+  '<rect x="5" y="4" width="2" height="1" fill="#fff"/><rect x="5" y="4" width="1" height="1" fill="#c4321f"/>' +
+  '<rect x="3" y="5" width="2" height="1" fill="#a36f50"/><rect x="2" y="6" width="4" height="1" fill="#6d3b2c"/></svg>');
 const CAM_DIST = 150;
 // ------------------------------------------
 
@@ -127,8 +135,8 @@ function render() {
     row.tabIndex = 0;
     const img = document.createElement("img");
     img.alt = "";
-    img.src = p.name ? `https://minotar.net/helm/${encodeURIComponent(p.name)}/40.png` : "";
-    img.onerror = () => { img.removeAttribute("src"); };
+    img.src = p.name ? `https://minotar.net/helm/${encodeURIComponent(p.name)}/40.png` : BANDIT;
+    img.onerror = () => { img.onerror = null; img.src = BANDIT; };
     const box = document.createElement("div");
     const b = document.createElement("b");
     b.textContent = p.friend ? p.name : "Чужой";
@@ -157,8 +165,8 @@ function moveCamera(p, force) {
   if (!mapReady || !$("follow").checked) return;
   const now = Date.now();
   const moved = !lastCam || lastCam.id !== p.id ||
-    Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 2 || Math.abs(lastCam.y - p.y) >= 3;
-  if (!force && (!moved || now - lastCamTime < 800)) return;
+    Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 1 || Math.abs(lastCam.y - p.y) >= 2;
+  if (!force && (!moved || now - lastCamTime < 400)) return;
   try {
     $("map").contentWindow.location.hash = mapLink(p);
     lastCam = { id: p.id, x: p.x, y: p.y, z: p.z };
