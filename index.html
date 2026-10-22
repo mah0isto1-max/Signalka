@@ -57,6 +57,20 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
     background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
     padding: 5px 10px; font-size: 13px; color: var(--ink); text-decoration: none;
   }
+  #pin { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; perspective: 400px; display: none; z-index: 5; }
+  #cube { position: absolute; width: 36px; height: 36px; left: -18px; top: -18px; transform-style: preserve-3d; animation: spin 7s linear infinite; }
+  #cube i { position: absolute; width: 36px; height: 36px; border: 3px solid var(--c, #ff6b55); box-sizing: border-box;
+    background: #111 center / cover no-repeat; image-rendering: pixelated; }
+  #cube i:nth-child(1) { transform: translateZ(18px); }
+  #cube i:nth-child(2) { transform: rotateY(180deg) translateZ(18px); }
+  #cube i:nth-child(3) { transform: rotateY(90deg) translateZ(18px); }
+  #cube i:nth-child(4) { transform: rotateY(-90deg) translateZ(18px); }
+  #cube i:nth-child(5) { transform: rotateX(90deg) translateZ(18px); }
+  #cube i:nth-child(6) { transform: rotateX(-90deg) translateZ(18px); }
+  #pinlabel { position: absolute; left: 0; top: 30px; transform: translateX(-50%); white-space: nowrap; font-size: 12px; font-weight: 600;
+    padding: 1px 7px; border-radius: 5px; color: #fff; background: var(--c, #ff6b55); }
+  @keyframes spin { from { transform: rotateX(-25deg) rotateY(0deg); } to { transform: rotateX(-25deg) rotateY(360deg); } }
+  @media (prefers-reduced-motion: reduce) { #cube { animation: none; transform: rotateX(-25deg) rotateY(25deg); } }
   #radar { width: 100%; height: 100%; display: block; background: var(--panel); }
   @media (max-width: 800px) {
     body { grid-template-columns: 1fr; grid-template-rows: auto 220px 1fr; }
@@ -78,6 +92,7 @@ if (window.top !== window.self) { document.documentElement.innerHTML = ""; throw
 <main>
   <div id="mapwrap">
     <iframe id="map" title="3D-карта сервера" allowfullscreen></iframe>
+    <div id="pin"><div id="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div><div id="pinlabel"></div></div>
     <div id="tools">
       <label><input type="checkbox" id="follow" checked> Камера следует за игроком</label>
       <a id="open" href="#" target="_blank" rel="noopener">Открыть карту</a>
@@ -159,7 +174,31 @@ function render() {
     $("open").href = MAP_URL;
   }
   drawRadar(ps);
+  updatePin();
 }
+
+function updatePin() {
+  const pin = $("pin");
+  const sel = state.players.find((p) => p.id === selected);
+  if (!sel || !mapReady) { pin.style.display = "none"; return; }
+  let near = true;
+  try {
+    const parts = $("map").contentWindow.location.hash.replace("#", "").split(":");
+    const cx = parseFloat(parts[1]), cz = parseFloat(parts[3]);
+    if (isFinite(cx) && isFinite(cz)) near = Math.abs(cx - sel.x) <= 6 && Math.abs(cz - sel.z) <= 6;
+  } catch (e) {}
+  if (!near) { pin.style.display = "none"; return; }
+  const color = sel.friend ? "#5fc58a" : "#ff6b55";
+  const src = sel.name ? `https://minotar.net/helm/${encodeURIComponent(sel.name)}/64.png` : BANDIT;
+  if (pin.dataset.src !== src) {
+    pin.dataset.src = src;
+    pin.querySelectorAll("#cube i").forEach((f) => { f.style.backgroundImage = `url("${src}")`; });
+  }
+  pin.style.setProperty("--c", color);
+  $("pinlabel").textContent = sel.friend ? sel.name : "Чужой " + sel.id.slice(0, 4);
+  pin.style.display = "block";
+}
+setInterval(updatePin, 300);
 
 function moveCamera(p, force) {
   if (!mapReady || !$("follow").checked) return;
