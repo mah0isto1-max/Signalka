@@ -2,8 +2,24 @@ local FILE = "guard_data"
 local RECENT = 15
 local MAP_URL = "http://mc.vestalis.xyz:25971/#world"
 local CAM_DIST = 150
-local SEND_EVERY = 0.3
+local SEND_EVERY = 0.1
 local data = { webhook = "", friends = {}, cooldown = 15, site = "", key = "", radar = nil, objfilter = "auto", objcats = {}, sizes = {} }
+
+-- output goes to the terminal, or into a buffer when a command comes from the website
+local capture = nil
+local function say(...)
+  local parts = {}
+  for i = 1, select("#", ...) do parts[i] = tostring((select(i, ...))) end
+  local s = table.concat(parts, " ")
+  if capture then capture[#capture + 1] = s else print(s) end
+end
+local function ask(prompt)
+  if capture then return nil end
+  write(prompt)
+  return read()
+end
+local runRemote   -- defined after runLine
+local pendingResults = {}
 
 local function save()
   local f = fs.open(FILE, "w")
@@ -96,6 +112,14 @@ local function wantObject(t)
   return true
 end
 
+-- radar range straight from the peripheral (falls back to the saved number)
+local function radarRange()
+  local ok, r = pcall(radar.getRange)
+  r = ok and tonumber(r) or nil
+  if r and r > 0 then return r end
+  return data.radar and data.radar.range or nil
+end
+
 local function round2(v) return math.floor(v * 100 + 0.5) / 100 end
 
 -- short "key=value" text of everything the radar says about a contact (shown on the site)
@@ -124,13 +148,13 @@ end
 
 local function sendDiscord(text)
   if data.webhook == "" then
-    print("Webhook not set")
+    say("Webhook not set")
     return false
   end
   local body = textutils.serializeJSON({ content = text })
   local ok, err = http.post(data.webhook, body, { ["Content-Type"] = "application/json" })
   if ok then ok.close() return true end
-  print("Webhook error: " .. tostring(err))
+  say("Webhook error: " .. tostring(err))
   return false
 end
 
@@ -166,23 +190,39 @@ local function pushSite()
     end
   end
   local url = data.site:gsub("/+$", "") .. "/api/update?key=" .. textutils.urlEncode(data.key)
-  local body = textutils.serializeJSON({ players = list, objects = objs, radar = data.radar })
+  local rd = nil
+  if data.radar then
+    rd = { x = data.radar.x, y = data.radar.y, z = data.radar.z, range = radarRange() or 0 }
+  end
+  local body = textutils.serializeJSON({ players = list, objects = objs, radar = rd, results = pendingResults })
   local ok, err = http.post(url, body, { ["Content-Type"] = "application/json" })
-  if ok then ok.close() return true end
+  if ok then
+    local text = ok.readAll()
+    ok.close()
+    pendingResults = {}
+    local j = text and textutils.unserializeJSON(text)
+    return true, nil, type(j) == "table" and j.cmds or nil
+  end
   return false, err
 end
 
 local function siteLoop()
   local failed = false
   while true do
-    local ok, err = pushSite()
+    local ok, err, cmds = pushSite()
     if ok == false and not failed then
-      print("Site error: " .. tostring(err))
+      say("Site error: " .. tostring(err))
       failed = true
     elseif ok then
       failed = false
     end
-    sleep(SEND_EVERY)
+    if ok and cmds and #cmds > 0 then
+      for _, c in ipairs(cmds) do
+        pendingResults[#pendingResults + 1] = { id = c.id, out = runRemote(tostring(c.line or "")) }
+      end
+    else
+      sleep(SEND_EVERY)
+    end
   end
 end
 
@@ -213,27 +253,25 @@ local function cmdAdd(arg)
     end
   end
   if #list == 0 then
-    print("No new players seen in last " .. RECENT .. "s")
+    say("No new players seen in last " .. RECENT .. "s")
     return
   end
   local n = 1
   if #list > 1 then
     for i, t in ipairs(list) do
-      print(("%d) x=%d z=%d  %s"):format(i, t.position.x, t.position.z, t.id:sub(1, 8)))
+      say(("%d) x=%d z=%d  %s"):format(i, t.position.x, t.position.z, t.id:sub(1, 8)))
     end
-    write("Number: ")
-    n = tonumber(read())
-    if not n or not list[n] then print("Cancelled") return end
+    n = tonumber(ask("Number: "))
+    if not n or not list[n] then say("Cancelled") return end
   end
   local nick = arg
   if not nick or nick == "" then
-    write("Nick: ")
-    nick = read()
+    nick = ask("Nick: ") or ""
   end
-  if nick == "" then print("Cancelled") return end
+  if nick == "" then say("Cancelled") return end
   data.friends[list[n].id] = nick
   save()
-  print("Added: " .. nick)
+  say("Added: " .. nick)
 end
 
 -- MD5 (needs bit32, available in CC: Tweaked) and Minecraft offline UUID
@@ -311,7 +349,7 @@ local function setFriend(nick, id)
     if sid:lower():gsub("%-", "") == id:gsub("%-", "") then id = sid end
   end
   data.friends[id] = nick
-  print("  " .. id)
+  say("  " .. id)
 end
 
 -- addid <nick>                 : adds the online (Mojang) UUID and the offline UUID
@@ -320,12 +358,12 @@ local function cmdAddId(arg)
   local toks = {}
   for t in (arg or ""):gmatch("%S+") do toks[#toks + 1] = t end
   local nick = table.remove(toks, 1)
-  if not nick then print("Usage: addid <nick> [uuid] [uuid]") return end
+  if not nick then say("Usage: addid <nick> [uuid] [uuid]") return end
   local ids = {}
   if #toks > 0 then
     for _, t in ipairs(toks) do
       local id = normUuid(t)
-      if not id then print("Bad UUID: " .. t) return end
+      if not id then say("Bad UUID: " .. t) return end
       ids[#ids + 1] = id
     end
   else
@@ -338,10 +376,10 @@ local function cmdAddId(arg)
       if online and online ~= ids[1] then ids[#ids + 1] = online end
       if online then nick = j.name or nick end
     else
-      print("Mojang lookup failed, adding offline UUID only")
+      say("Mojang lookup failed, adding offline UUID only")
     end
   end
-  print("Added " .. nick .. ":")
+  say("Added " .. nick .. ":")
   for _, id in ipairs(ids) do setFriend(nick, id) end
   save()
 end
@@ -349,10 +387,10 @@ end
 local function cmdList()
   local any = false
   for id, nick in pairs(data.friends) do
-    print(nick .. "  " .. id:sub(1, 8))
+    say(nick .. "  " .. id:sub(1, 8))
     any = true
   end
-  if not any then print("List is empty") end
+  if not any then say("List is empty") end
 end
 
 local function cmdDel(nick)
@@ -363,28 +401,27 @@ local function cmdDel(nick)
       n = n + 1
     end
   end
-  if n > 0 then save() print("Removed " .. n .. " UUID(s) of " .. nick) else print("Not found") end
+  if n > 0 then save() say("Removed " .. n .. " UUID(s) of " .. nick) else say("Not found") end
 end
 
--- radar <x> <y> <z> <range> | radar here <range> | radar off
+-- radar <x> <y> <z> [range] | radar here [range] | radar off  (range is read from the radar if omitted)
 local function cmdRadar(arg)
   local t = {}
   for w in (arg or ""):gmatch("%S+") do t[#t + 1] = w end
   if t[1] == "off" then
-    data.radar = nil save() print("Radar circle removed")
+    data.radar = nil save() say("Radar circle removed")
   elseif t[1] == "here" then
     local x, y, z = gps.locate(2)
-    local range = tonumber(t[2])
-    if not x then print("GPS not available, use: radar <x> <y> <z> <range>") return end
-    if not range then print("Usage: radar here <range>") return end
-    data.radar = { x = x, y = y, z = z, range = range } save() print("Radar saved")
-  elseif #t == 4 and tonumber(t[1]) and tonumber(t[2]) and tonumber(t[3]) and tonumber(t[4]) then
-    data.radar = { x = tonumber(t[1]), y = tonumber(t[2]), z = tonumber(t[3]), range = tonumber(t[4]) }
-    save() print("Radar saved")
+    if not x then say("GPS not available, use: radar <x> <y> <z>") return end
+    data.radar = { x = x, y = y, z = z, range = tonumber(t[2]) or radarRange() or 0 }
+    save() say("Radar saved, range " .. data.radar.range)
+  elseif (#t == 3 or #t == 4) and tonumber(t[1]) and tonumber(t[2]) and tonumber(t[3]) then
+    data.radar = { x = tonumber(t[1]), y = tonumber(t[2]), z = tonumber(t[3]), range = tonumber(t[4]) or radarRange() or 0 }
+    save() say("Radar saved, range " .. data.radar.range)
   elseif data.radar then
-    print(("Radar: x=%d y=%d z=%d range=%d"):format(data.radar.x, data.radar.y, data.radar.z, data.radar.range))
+    say(("Radar: x=%d y=%d z=%d range=%s (live)"):format(data.radar.x, data.radar.y, data.radar.z, tostring(radarRange())))
   else
-    print("Usage: radar <x> <y> <z> <range> | radar here <range> | radar off")
+    say("Usage: radar <x> <y> <z> [range] | radar here [range] | radar off")
   end
 end
 
@@ -393,13 +430,13 @@ local function cmdSize(arg)
   local t = {}
   for w in (arg or ""):gmatch("%S+") do t[#t + 1] = w end
   if t[1] == "del" and t[2] then
-    data.sizes[t[2]] = nil save() print("Removed " .. t[2])
+    data.sizes[t[2]] = nil save() say("Removed " .. t[2])
   elseif #t == 4 and tonumber(t[2]) and tonumber(t[3]) and tonumber(t[4]) then
     data.sizes[t[1]] = { l = tonumber(t[2]), w = tonumber(t[3]), h = tonumber(t[4]) }
-    save() print("Size saved for " .. t[1])
+    save() say("Size saved for " .. t[1])
   else
-    for k, s in pairs(data.sizes) do print(("%s: %sx%sx%s"):format(k, s.l, s.w, s.h)) end
-    print("Usage: size <name|id-start> <length> <width> <height>")
+    for k, s in pairs(data.sizes) do say(("%s: %sx%sx%s"):format(k, s.l, s.w, s.h)) end
+    say("Usage: size <name|id-start> <length> <width> <height>")
   end
 end
 
@@ -408,21 +445,21 @@ local function cmdObjects(arg)
   local t = {}
   for w in (arg or ""):gmatch("%S+") do t[#t + 1] = w end
   if t[1] == "auto" or t[1] == "all" or t[1] == "off" then
-    data.objfilter = t[1] data.objcats = {} save() print("Objects: " .. t[1])
+    data.objfilter = t[1] data.objcats = {} save() say("Objects: " .. t[1])
   elseif t[1] == "only" and #t > 1 then
     table.remove(t, 1)
     data.objfilter = "only" data.objcats = t save()
-    print("Objects only: " .. table.concat(t, " "))
+    say("Objects only: " .. table.concat(t, " "))
   else
-    print("Objects: " .. data.objfilter .. " " .. table.concat(data.objcats, " "))
-    print("Usage: objects auto | all | off | only <CATEGORY>..")
+    say("Objects: " .. data.objfilter .. " " .. table.concat(data.objcats, " "))
+    say("Usage: objects auto | all | off | only <CATEGORY>..")
   end
 end
 
 -- what does the radar report? one line per category + full sample saved to tracks_dump.txt
 local function cmdTracks()
   local tracks = getAllTracks()
-  if #tracks == 0 then print("No contacts right now") return end
+  if #tracks == 0 then say("No contacts right now") return end
   local groups, order, samples = {}, {}, {}
   for _, t in ipairs(tracks) do
     local c = tostring(t.category)
@@ -435,66 +472,98 @@ local function cmdTracks()
     local keys = {}
     for k in pairs(g.sample) do keys[#keys + 1] = tostring(k) end
     table.sort(keys)
-    print(("%s x%d: %s"):format(c, g.n, table.concat(keys, ",")))
+    say(("%s x%d: %s"):format(c, g.n, table.concat(keys, ",")))
     samples[#samples + 1] = g.sample
   end
   local f = fs.open("tracks_dump.txt", "w")
   f.write(textutils.serialize(samples))
   f.close()
-  print("Sample of each category saved: tracks_dump.txt")
+  say("Sample of each category saved: tracks_dump.txt")
+end
+
+-- list every connected peripheral and its methods (to look for something that knows ship sizes)
+local function cmdPeriph()
+  local out = {}
+  for _, n in ipairs(peripheral.getNames()) do
+    local m = peripheral.getMethods(n) or {}
+    table.sort(m)
+    out[#out + 1] = n .. " (" .. tostring(peripheral.getType(n)) .. "): " .. table.concat(m, ", ")
+    say(n .. " (" .. tostring(peripheral.getType(n)) .. ") " .. #m .. " methods")
+  end
+  local f = fs.open("periph_dump.txt", "w")
+  f.write(table.concat(out, "\n\n"))
+  f.close()
+  say("Full list saved: periph_dump.txt")
 end
 
 local function help()
-  print("add [nick] - add friend (stand near radar)")
-  print("addid <nick> - add friend by nick, both online+offline UUID")
-  print("addid <nick> <uuid> [uuid] - add exact UUIDs")
-  print("radar <x> <y> <z> <range> - show radar circle on the site")
-  print("objects auto|all|off|only <CAT>.. - constructions/other contacts")
-  print("tracks - what the radar reports, saves tracks_dump.txt")
-  print("size <name> <len> <wid> <hgt> - set box size of a construction")
-  print("list - show friends")
-  print("del <nick> - remove friend")
-  print("webhook <url> - set webhook")
-  print("site <url> - set website address")
-  print("key <secret> - set website secret key")
-  print("test - send test message")
-  print("cooldown <sec> - pause between alerts")
+  say("add [nick] - add friend (stand near radar)")
+  say("addid <nick> - add friend by nick, both online+offline UUID")
+  say("addid <nick> <uuid> [uuid] - add exact UUIDs")
+  say("radar <x> <y> <z> [range] - circle on the site (range auto from radar)")
+  say("objects auto|all|off|only <CAT>.. - constructions/other contacts")
+  say("tracks - what the radar reports, saves tracks_dump.txt")
+  say("size <name> <len> <wid> <hgt> - set box size of a construction")
+  say("periph - list peripherals+methods, saves periph_dump.txt")
+  say("list - show friends")
+  say("del <nick> - remove friend")
+  say("webhook <url> - set webhook")
+  say("site <url> - set website address")
+  say("key <secret> - set website secret key")
+  say("test - send test message")
+  say("cooldown <sec> - pause between alerts")
+end
+
+local function runLine(line)
+  local cmd, arg = line:match("^(%S+)%s*(.-)$")
+  if cmd == "add" then cmdAdd(arg)
+  elseif cmd == "addid" then cmdAddId(arg)
+  elseif cmd == "radar" then cmdRadar(arg)
+  elseif cmd == "objects" then cmdObjects(arg)
+  elseif cmd == "tracks" then cmdTracks()
+  elseif cmd == "size" then cmdSize(arg)
+  elseif cmd == "periph" then cmdPeriph()
+  elseif cmd == "list" then cmdList()
+  elseif cmd == "del" then cmdDel(arg)
+  elseif cmd == "webhook" then
+    data.webhook = arg
+    save()
+    say("Webhook saved")
+  elseif cmd == "site" then
+    data.site = arg
+    save()
+    say("Site saved")
+  elseif cmd == "key" then
+    data.key = arg
+    save()
+    say("Key saved")
+  elseif cmd == "test" then
+    say(sendDiscord("Guard test message\n" .. mapLink({ x = 0, y = 70, z = 0 })) and "Sent" or "Not sent")
+  elseif cmd == "cooldown" then
+    data.cooldown = tonumber(arg) or data.cooldown
+    save()
+    say("Cooldown: " .. data.cooldown)
+  elseif cmd == "help" then help()
+  elseif cmd then say("Unknown command, type help") end
+end
+
+local REMOTE_BLOCKED = { key = true, site = true }
+function runRemote(line)
+  local cmd = line:match("^(%S+)")
+  if cmd and REMOTE_BLOCKED[cmd] then return "Command not allowed from the website" end
+  capture = {}
+  local ok, err = pcall(runLine, line)
+  local out = capture
+  capture = nil
+  if not ok then out[#out + 1] = "Error: " .. tostring(err) end
+  return table.concat(out, "\n"):sub(1, 2000)
 end
 
 local function cmdLoop()
-  print("Guard started. Type help")
+  say("Guard started. Type help")
   while true do
     write("> ")
-    local line = read()
-    local cmd, arg = line:match("^(%S+)%s*(.-)$")
-    if cmd == "add" then cmdAdd(arg)
-    elseif cmd == "addid" then cmdAddId(arg)
-    elseif cmd == "radar" then cmdRadar(arg)
-    elseif cmd == "objects" then cmdObjects(arg)
-    elseif cmd == "tracks" then cmdTracks()
-    elseif cmd == "size" then cmdSize(arg)
-    elseif cmd == "list" then cmdList()
-    elseif cmd == "del" then cmdDel(arg)
-    elseif cmd == "webhook" then
-      data.webhook = arg
-      save()
-      print("Webhook saved")
-    elseif cmd == "site" then
-      data.site = arg
-      save()
-      print("Site saved")
-    elseif cmd == "key" then
-      data.key = arg
-      save()
-      print("Key saved")
-    elseif cmd == "test" then
-      print(sendDiscord("Guard test message\n" .. mapLink({ x = 0, y = 70, z = 0 })) and "Sent" or "Not sent")
-    elseif cmd == "cooldown" then
-      data.cooldown = tonumber(arg) or data.cooldown
-      save()
-      print("Cooldown: " .. data.cooldown)
-    elseif cmd == "help" then help()
-    elseif cmd then print("Unknown command, type help") end
+    runLine(read())
   end
 end
 
