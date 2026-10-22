@@ -435,7 +435,7 @@ function moveCamera(p, force) {
       }
       return;
     }
-    w.location.replace(mapLink(p));
+    w.location.replace(MAP_URL + mapLink(p));   // full path: a bare #hash resolves against BlueMap's <base> and opens the site itself
     lastCam = { id: p.id, x: p.x, y: p.y, z: p.z };
     lastCamTime = now;
   } catch (e) {}
@@ -488,7 +488,7 @@ function drawRadar(ps) {
 
   if (rd) {
     g.strokeStyle = col("--accent"); g.lineWidth = 2; g.setLineDash([8, 5]);
-    g.beginPath(); g.arc(X(rd.x), Z(rd.z), rd.range * sc, 0, Math.PI * 2); g.stroke();
+    g.beginPath(); g.arc(X(rd.x), Z(rd.z), Math.max(0, rd.range * sc), 0, Math.PI * 2); g.stroke();
     g.setLineDash([]);
     g.fillStyle = col("--accent"); g.fillRect(X(rd.x) - 4, Z(rd.z) - 4, 8, 8);
   }
