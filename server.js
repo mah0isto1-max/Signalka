@@ -16,6 +16,64 @@ let objects = [];     // non-player contacts (aircraft, contraptions...)
 let radar = null;     // {x,y,z,range} sent by the computer
 const clients = new Set();
 
+// ---- password gate + remote console ----
+const crypto = require("crypto");
+const PASS = process.env.SITE_PASS || "5555";
+const TOKEN = crypto.createHash("sha256").update("signalka|" + PASS + "|" + KEY).digest("hex");
+const fails = {};          // ip -> {n, until}
+let cmdQueue = [];         // commands waiting for the computer
+let cmdSeq = 0;
+let consoleLog = [];       // {n, t, kind: "in"|"out", text}
+let logSeq = 0;
+function logConsole(kind, text) {
+  consoleLog.push({ n: ++logSeq, t: Date.now(), kind, text });
+  if (consoleLog.length > 300) consoleLog.shift();
+}
+function isOnline() { return lastUpdate > 0 && Date.now() - lastUpdate < STALE_MS; }
+function cookieOf(req, name) {
+  const m = (req.headers.cookie || "").split(/;\s*/).find((c) => c.startsWith(name + "="));
+  return m ? m.slice(name.length + 1) : "";
+}
+function authed(req) {
+  const c = cookieOf(req, "sig");
+  return c.length === TOKEN.length && crypto.timingSafeEqual(Buffer.from(c), Buffer.from(TOKEN));
+}
+function clientIp(req) {
+  return String(req.headers["x-forwarded-for"] || "").split(",")[0].trim() || req.socket.remoteAddress || "?";
+}
+const HTML_HDR = { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" };
+function loginPage(msg) {
+  return '<!DOCTYPE html><html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
+    "<title>Вход</title><style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#141a17;color:#e4ebe5;font:16px system-ui,sans-serif}" +
+    "form{background:#1b2420;border:1px solid #2f3b34;border-radius:10px;padding:24px;width:280px;display:grid;gap:12px}" +
+    "h1{margin:0;font-size:18px}input,button{font:inherit;padding:9px 10px;border-radius:6px;border:1px solid #2f3b34;background:#141a17;color:inherit}" +
+    "button{background:#1f5f8b;border-color:#1f5f8b;cursor:pointer}.e{color:#ff6b55;font-size:14px;min-height:1em}</style></head><body>" +
+    '<form method="POST" action="/login"><h1>Радар базы</h1><input type="password" name="password" placeholder="Пароль" autofocus autocomplete="current-password">' +
+    '<div class="e">' + esc(msg) + '</div><button type="submit">Войти</button></form></body></html>';
+}
+function handleLogin(req, res) {
+  if (req.method !== "POST") { res.writeHead(200, HTML_HDR); return res.end(loginPage("")); }
+  const ip = clientIp(req);
+  const f = fails[ip] || { n: 0, until: 0 };
+  if (Date.now() < f.until) { res.writeHead(429, HTML_HDR); return res.end(loginPage("Слишком много попыток. Подождите 5 минут.")); }
+  readBody(req, (body) => {
+    const pw = new URLSearchParams(body).get("password") || "";
+    const a = crypto.createHash("sha256").update(pw).digest();
+    const b = crypto.createHash("sha256").update(PASS).digest();
+    if (crypto.timingSafeEqual(a, b)) {
+      delete fails[ip];
+      const secure = req.headers["x-forwarded-proto"] === "https" ? "; Secure" : "";
+      res.writeHead(302, { "Set-Cookie": "sig=" + TOKEN + "; Path=/; HttpOnly; SameSite=Lax; Max-Age=2592000" + secure, Location: "/" });
+      return res.end();
+    }
+    f.n++;
+    if (f.n >= 5) { f.until = Date.now() + 300000; f.n = 0; }
+    fails[ip] = f;
+    res.writeHead(401, HTML_HDR);
+    res.end(loginPage("Неверный пароль"));
+  });
+}
+
 function cleanObjects(list) {
   if (!Array.isArray(list)) return [];
   return list.slice(0, 60).map((o) => ({
@@ -70,6 +128,7 @@ function proxyMap(req, res, upPath) {
   const headers = { ...req.headers, host: MAP_ORIGIN.host };
   delete headers.referer;
   delete headers.origin;
+  delete headers.cookie;
   const up = http.request(
     { host: MAP_ORIGIN.hostname, port: MAP_ORIGIN.port || 80, method: req.method, path: upPath, headers },
     (ur) => {
@@ -135,7 +194,7 @@ function serveMarkers(req, res, upPath) {
     res.end(JSON.stringify(base));
   };
   const headers = { ...req.headers, host: MAP_ORIGIN.host, "accept-encoding": "identity" };
-  delete headers.referer; delete headers.origin;
+  delete headers.referer; delete headers.origin; delete headers.cookie;
   delete headers["if-none-match"]; delete headers["if-modified-since"];
   const up = http.request(
     { host: MAP_ORIGIN.hostname, port: MAP_ORIGIN.port || 80, method: "GET", path: upPath, headers },
@@ -159,6 +218,18 @@ function serveMarkers(req, res, upPath) {
 const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");
 
+  if (url.pathname === "/login") return handleLogin(req, res);
+  // the computer (key in the URL) and the key-protected debug pages stay reachable without the site password
+  const open = (req.method === "POST" && url.pathname === "/api/update") || url.pathname === "/api/debug" || url.pathname === "/api/mapcheck";
+  if (!open && !authed(req)) {
+    if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
+      res.writeHead(200, HTML_HDR);
+      return res.end(loginPage(""));
+    }
+    res.writeHead(401, { "Content-Type": "text/plain; charset=utf-8" });
+    return res.end("login required");
+  }
+
   if (url.pathname === "/map") {
     res.writeHead(302, { Location: "/map/" + url.search });
     return res.end();
@@ -175,11 +246,12 @@ const server = http.createServer((req, res) => {
       return res.end("bad key");
     }
     return readBody(req, (body) => {
-      let list;
+      let list, results;
       try {
         const parsed = JSON.parse(body);
         list = parsed.players;
         objects = cleanObjects(parsed.objects);
+        results = parsed.results;
         const r = parsed.radar;
         radar = r && isFinite(+r.x) && isFinite(+r.z) && +r.range > 0
           ? { x: +r.x, y: +r.y || 0, z: +r.z, range: +r.range } : null;
@@ -215,8 +287,14 @@ const server = http.createServer((req, res) => {
       players = next;
       lastUpdate = Date.now();
       broadcast();
-      res.writeHead(200);
-      res.end("ok");
+      if (Array.isArray(results)) {
+        for (const r of results.slice(0, 20)) {
+          if (r) logConsole("out", String(r.out == null ? "" : r.out).slice(0, 2000) || "(нет вывода)");
+        }
+      }
+      const cmds = cmdQueue.splice(0, 5);
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, cmds }));
     });
   }
 
@@ -227,6 +305,49 @@ const server = http.createServer((req, res) => {
     }
     res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
     return res.end(JSON.stringify({ players: Object.keys(players).length, mapPaths: seenPaths, markers: guardMarkerSet() }, null, 1));
+  }
+
+  // can the site itself reach the map? (open /api/mapcheck?key=KEY)
+  if (url.pathname === "/api/mapcheck") {
+    if (url.searchParams.get("key") !== KEY) {
+      res.writeHead(403);
+      return res.end("bad key");
+    }
+    const probe = (p) => new Promise((resolve) => {
+      const t0 = Date.now();
+      const r = http.get({ host: MAP_ORIGIN.hostname, port: MAP_ORIGIN.port || 80, path: p, headers: { host: MAP_ORIGIN.host } }, (ur) => {
+        let n = 0, head = "";
+        ur.on("data", (c) => { n += c.length; if (head.length < 120) head += c.toString("utf8", 0, 120); });
+        ur.on("end", () => resolve({ path: p, status: ur.statusCode, ms: Date.now() - t0, type: ur.headers["content-type"], bytes: n, location: ur.headers.location, start: head.slice(0, 120) }));
+      });
+      r.setTimeout(8000, () => r.destroy(new Error("timeout")));
+      r.on("error", (e) => resolve({ path: p, error: String(e.message || e), ms: Date.now() - t0 }));
+    });
+    return Promise.all(["/", "/settings.json"].map(probe)).then((results) => {
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ origin: MAP_ORIGIN.href, results }, null, 1));
+    });
+  }
+
+  if (url.pathname === "/api/cmd" && req.method === "POST") {
+    const json = (code, o) => { res.writeHead(code, { "Content-Type": "application/json; charset=utf-8" }); res.end(JSON.stringify(o)); };
+    if (!String(req.headers["content-type"] || "").includes("application/json")) return json(415, { error: "bad type" });
+    return readBody(req, (body) => {
+      let line = "";
+      try { line = String(JSON.parse(body).line || "").trim().slice(0, 300); } catch (e) {}
+      if (!line) return json(400, { error: "пустая команда" });
+      if (!isOnline()) return json(503, { error: "компьютер не на связи, команда не отправлена" });
+      if (cmdQueue.length >= 20) return json(429, { error: "слишком много команд в очереди" });
+      cmdQueue.push({ id: ++cmdSeq, line });
+      logConsole("in", line);
+      json(200, { ok: true });
+    });
+  }
+
+  if (url.pathname === "/api/console") {
+    const since = +url.searchParams.get("since") || 0;
+    res.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    return res.end(JSON.stringify({ n: logSeq, online: isOnline(), entries: consoleLog.filter((e) => e.n > since) }));
   }
 
   if (url.pathname === "/api/state") {
