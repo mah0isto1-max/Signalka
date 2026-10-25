@@ -29,11 +29,24 @@ if (window.top !== window.self) {
     display: grid; grid-template-columns: 340px 1fr; grid-template-rows: auto 1fr;
     transition: background-color .2s, color .2s;
   }
+  body.mini-mode {
+    grid-template-columns: 1fr;
+    grid-template-rows: auto 1fr;
+  }
+  body.mini-mode aside,
+  body.mini-mode #tabs,
+  body.mini-mode #radarThemeWrap {
+    display: none !important;
+  }
+  body.mini-mode main {
+    grid-template-rows: 1fr 150px;
+  }
   header {
     grid-column: 1 / 3; display: flex; align-items: center; gap: 12px;
     padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
     transition: background-color .2s, border-color .2s;
   }
+  body.mini-mode header { grid-column: 1; }
   h1 { font-size: 17px; margin: 0; font-weight: 650; }
   #status { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
@@ -74,35 +87,113 @@ if (window.top !== window.self) {
   #mapwrap { position: relative; min-height: 0; border-bottom: 1px solid var(--line); }
   iframe { width: 100%; height: 100%; border: 0; background: var(--line); }
   #tools { position: absolute; right: 16px; bottom: 12px; display: flex; gap: 8px; z-index: 6; flex-wrap: wrap; }
-  #tools label, #tools a, #tools select {
+  #tools label, #tools a, #tools select, #tools button {
     background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
     padding: 5px 10px; font-size: 13px; color: var(--ink); text-decoration: none;
-    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3); cursor: pointer; font-family: inherit;
   }
-  #tools select { cursor: pointer; outline: none; padding: 4px 8px; }
+  #tools select { outline: none; padding: 4px 8px; }
+  #btnPipTool, #headerPip {
+    background: var(--accent); border-color: var(--accent); color: #fff; font-weight: 550;
+  }
 
-  /* Pin mode toggling */
-  #mapwrap.mode-body .pin-cube-view { display: none !important; }
-  #mapwrap.mode-cube .pin-body-view { display: none !important; }
+  /* Pin mode visibility */
+  #mapwrap.mode-model3d .pin-cube-view,
+  #mapwrap.mode-model3d .pin-body-view { display: none !important; }
+  #mapwrap.mode-body .pin-cube-view,
+  #mapwrap.mode-body .pin-model3d-view { display: none !important; }
+  #mapwrap.mode-cube .pin-body-view,
+  #mapwrap.mode-cube .pin-model3d-view { display: none !important; }
 
-  /* Body Pin View */
+  /* Body Pin View (2D projection) */
   .pin-body-view { position: absolute; left: 0; bottom: 0; pointer-events: none; }
   .player-shadow {
-    position: absolute; left: -20px; top: -5px; width: 40px; height: 10px;
-    border-radius: 50%; background: rgba(0,0,0,0.55); filter: blur(2px);
+    position: absolute; left: -22px; top: -5px; width: 44px; height: 12px;
+    border-radius: 50%; background: rgba(0,0,0,0.6); filter: blur(2px);
   }
   .player-figure {
     position: absolute; left: -26px; bottom: 0; width: 52px; height: 104px;
     image-rendering: pixelated; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.65));
     transform-origin: bottom center;
   }
+
+  /* 3D Static Minecraft Character Model */
+  .pin-model3d-view {
+    position: absolute; left: 0; bottom: 0; pointer-events: none;
+    perspective: 800px;
+  }
+  .steve3d-wrap {
+    position: absolute; left: 0; bottom: 0; width: 0; height: 0;
+    transform-style: preserve-3d; transform: rotateX(-15deg) rotateY(20deg);
+  }
+  .b3d { position: absolute; transform-style: preserve-3d; }
+  .b3d > div {
+    position: absolute; box-sizing: border-box; image-rendering: pixelated;
+    background-size: 128px 128px; background-repeat: no-repeat;
+    background-color: #647068; border: 1px solid rgba(0,0,0,0.3);
+  }
+  /* Head: 20x20x20 */
+  .m-head { width: 20px; height: 20px; left: -10px; bottom: 50px; }
+  .m-head .f-f { width: 20px; height: 20px; transform: translateZ(10px); }
+  .m-head .f-b { width: 20px; height: 20px; transform: rotateY(180deg) translateZ(10px); }
+  .m-head .f-l { width: 20px; height: 20px; transform: rotateY(-90deg) translateZ(10px); }
+  .m-head .f-r { width: 20px; height: 20px; transform: rotateY(90deg) translateZ(10px); }
+  .m-head .f-t { width: 20px; height: 20px; transform: rotateX(90deg) translateZ(10px); }
+  .m-head .f-d { width: 20px; height: 20px; transform: rotateX(-90deg) translateZ(10px); }
+
+  /* Body: 20x26x10 */
+  .m-body { width: 20px; height: 26px; left: -10px; bottom: 24px; }
+  .m-body .f-f { width: 20px; height: 26px; transform: translateZ(5px); }
+  .m-body .f-b { width: 20px; height: 26px; transform: rotateY(180deg) translateZ(5px); }
+  .m-body .f-l { width: 10px; height: 26px; left: 5px; transform: rotateY(-90deg) translateZ(10px); }
+  .m-body .f-r { width: 10px; height: 26px; left: 5px; transform: rotateY(90deg) translateZ(10px); }
+  .m-body .f-t { width: 20px; height: 10px; top: 8px; transform: rotateX(90deg) translateZ(13px); }
+  .m-body .f-d { width: 20px; height: 10px; top: 8px; transform: rotateX(-90deg) translateZ(13px); }
+
+  /* Left Arm: 10x26x10 */
+  .m-arm-l { width: 10px; height: 26px; left: -20px; bottom: 24px; }
+  .m-arm-l .f-f { width: 10px; height: 26px; transform: translateZ(5px); }
+  .m-arm-l .f-b { width: 10px; height: 26px; transform: rotateY(180deg) translateZ(5px); }
+  .m-arm-l .f-l { width: 10px; height: 26px; transform: rotateY(-90deg) translateZ(5px); }
+  .m-arm-l .f-r { width: 10px; height: 26px; transform: rotateY(90deg) translateZ(5px); }
+  .m-arm-l .f-t { width: 10px; height: 10px; top: 8px; transform: rotateX(90deg) translateZ(13px); }
+  .m-arm-l .f-d { width: 10px; height: 10px; top: 8px; transform: rotateX(-90deg) translateZ(13px); }
+
+  /* Right Arm: 10x26x10 */
+  .m-arm-r { width: 10px; height: 26px; left: 10px; bottom: 24px; }
+  .m-arm-r .f-f { width: 10px; height: 26px; transform: translateZ(5px); }
+  .m-arm-r .f-b { width: 10px; height: 26px; transform: rotateY(180deg) translateZ(5px); }
+  .m-arm-r .f-l { width: 10px; height: 26px; transform: rotateY(-90deg) translateZ(5px); }
+  .m-arm-r .f-r { width: 10px; height: 26px; transform: rotateY(90deg) translateZ(5px); }
+  .m-arm-r .f-t { width: 10px; height: 10px; top: 8px; transform: rotateX(90deg) translateZ(13px); }
+  .m-arm-r .f-d { width: 10px; height: 10px; top: 8px; transform: rotateX(-90deg) translateZ(13px); }
+
+  /* Left Leg: 10x24x10 */
+  .m-leg-l { width: 10px; height: 24px; left: -10px; bottom: 0; }
+  .m-leg-l .f-f { width: 10px; height: 24px; transform: translateZ(5px); }
+  .m-leg-l .f-b { width: 10px; height: 24px; transform: rotateY(180deg) translateZ(5px); }
+  .m-leg-l .f-l { width: 10px; height: 24px; transform: rotateY(-90deg) translateZ(5px); }
+  .m-leg-l .f-r { width: 10px; height: 24px; transform: rotateY(90deg) translateZ(5px); }
+  .m-leg-l .f-t { width: 10px; height: 10px; top: 7px; transform: rotateX(90deg) translateZ(12px); }
+  .m-leg-l .f-d { width: 10px; height: 10px; top: 7px; transform: rotateX(-90deg) translateZ(12px); }
+
+  /* Right Leg: 10x24x10 */
+  .m-leg-r { width: 10px; height: 24px; left: 0; bottom: 0; }
+  .m-leg-r .f-f { width: 10px; height: 24px; transform: translateZ(5px); }
+  .m-leg-r .f-b { width: 10px; height: 24px; transform: rotateY(180deg) translateZ(5px); }
+  .m-leg-r .f-l { width: 10px; height: 24px; transform: rotateY(-90deg) translateZ(5px); }
+  .m-leg-r .f-r { width: 10px; height: 24px; transform: rotateY(90deg) translateZ(5px); }
+  .m-leg-r .f-t { width: 10px; height: 10px; top: 7px; transform: rotateX(90deg) translateZ(12px); }
+  .m-leg-r .f-d { width: 10px; height: 10px; top: 7px; transform: rotateX(-90deg) translateZ(12px); }
+
   .player-nameplate {
     position: absolute; left: 0; bottom: 110px; transform: translateX(-50%);
     white-space: nowrap; font-size: 12px; font-weight: 600;
     padding: 2px 8px; border-radius: 5px; color: #fff;
     background: rgba(16, 22, 19, 0.9); border: 2px solid var(--c, #ff6b55);
-    box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.6); pointer-events: none;
   }
+  .m3d-plate { bottom: 78px; }
 
   /* Cube Pin View */
   #pin { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; perspective: 400px; display: none; z-index: 5; }
@@ -175,6 +266,7 @@ if (window.top !== window.self) {
 <header>
   <h1>Радар базы</h1>
   <nav id="tabs"><button class="tab on" data-t="radar">Радар</button><button class="tab" data-t="console">Консоль</button></nav>
+  <button type="button" class="tab" id="headerPip" title="Открыть в плавающем окне поверх игры">📺 Окно поверх игры (PiP)</button>
   <div id="radarThemeWrap">
     <span>Цвет темы:</span>
     <div class="color-presets">
@@ -205,11 +297,23 @@ if (window.top !== window.self) {
 </aside>
 
 <main>
-  <div id="mapwrap" class="mode-body">
+  <div id="mapwrap" class="mode-model3d">
     <iframe id="map" title="3D-карта сервера" allowfullscreen></iframe>
     <canvas id="ring"></canvas>
     <div id="pins"></div>
     <div id="pin">
+      <div class="pin-model3d-view">
+        <div class="player-shadow"></div>
+        <div class="steve3d-wrap">
+          <div class="b3d m-head"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+          <div class="b3d m-body"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+          <div class="b3d m-arm-l"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+          <div class="b3d m-arm-r"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+          <div class="b3d m-leg-l"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+          <div class="b3d m-leg-r"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+        </div>
+        <div class="player-nameplate m3d-plate" id="body3dpinlabel"></div>
+      </div>
       <div class="pin-body-view">
         <div class="player-shadow"></div>
         <img class="player-figure" alt="" src="">
@@ -224,10 +328,12 @@ if (window.top !== window.self) {
       <label title="Внешний вид маркера игрока на 3D-карте">
         Маркер:
         <select id="pinStyle">
-          <option value="body">Фигура со скином</option>
+          <option value="model3d">3D модель игрока (со скином)</option>
+          <option value="body">2D проекция тела</option>
           <option value="cube">Вращающийся кубик</option>
         </select>
       </label>
+      <button type="button" id="btnPipTool" title="Открыть в плавающем окне поверх игры">📺 Поверх игры (PiP)</button>
       <label><input type="checkbox" id="follow" checked> Следить камерой</label>
       <a id="open" href="#" target="_blank" rel="noopener">Открыть карту</a>
     </div>
@@ -262,6 +368,11 @@ const CAM_DIST = 150;
 
 const $ = (id) => document.getElementById(id);
 
+// Check if launched in ?mini=1 popup mode
+if (new URLSearchParams(location.search).get("mini") === "1") {
+  document.body.classList.add("mini-mode");
+}
+
 // ---- UUID -> Nickname client cache & resolver ----
 const nickCache = (() => {
   try { return JSON.parse(localStorage.getItem("nick_cache") || "{}"); } catch (e) { return {}; }
@@ -279,6 +390,7 @@ async function resolveNick(uuid) {
   if (resolvingUuids.has(clean)) return null;
   resolvingUuids.add(clean);
   try {
+    // 1. Try our server /api/resolve (has BlueMap offline players + Mojang)
     const srv = await fetch("/api/resolve?uuid=" + encodeURIComponent(uuid)).catch(() => null);
     if (srv && srv.ok) {
       const sj = await srv.json().catch(() => null);
@@ -291,6 +403,7 @@ async function resolveNick(uuid) {
         return sj.name;
       }
     }
+    // 2. Direct fallback to PlayerDB
     const res = await fetch("https://playerdb.co/api/player/minecraft/" + clean).catch(() => null);
     if (res && res.ok) {
       const pj = await res.json().catch(() => null);
@@ -308,6 +421,35 @@ async function resolveNick(uuid) {
   resolvingUuids.delete(clean);
   return null;
 }
+
+// Poll BlueMap live server players every 3s to capture offline/cracked players instantly
+async function pollBlueMapClient() {
+  try {
+    const res = await fetch("/map/maps/world/live/players.json", { cache: "no-store" });
+    if (res.ok) {
+      const j = await res.json();
+      if (Array.isArray(j.players)) {
+        let changed = false;
+        for (const pl of j.players) {
+          if (pl.uuid && pl.name) {
+            const clean = pl.uuid.replace(/-/g, "").toLowerCase();
+            if (nickCache[pl.uuid] !== pl.name || nickCache[clean] !== pl.name) {
+              nickCache[pl.uuid] = pl.name;
+              nickCache[clean] = pl.name;
+              changed = true;
+            }
+          }
+        }
+        if (changed) {
+          saveNickCache();
+          render();
+        }
+      }
+    }
+  } catch (e) {}
+}
+setInterval(pollBlueMapClient, 3000);
+pollBlueMapClient();
 
 // ---- Theming the entire page ----
 const THEME_PRESETS = {
@@ -526,6 +668,18 @@ function makePin() {
   const el = document.createElement("div");
   el.className = "pp";
   el.innerHTML = `
+    <div class="pin-model3d-view">
+      <div class="player-shadow"></div>
+      <div class="steve3d-wrap">
+        <div class="b3d m-head"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+        <div class="b3d m-body"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+        <div class="b3d m-arm-l"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+        <div class="b3d m-arm-r"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+        <div class="b3d m-leg-l"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+        <div class="b3d m-leg-r"><div class="f-f"></div><div class="f-b"></div><div class="f-l"></div><div class="f-r"></div><div class="f-t"></div><div class="f-d"></div></div>
+      </div>
+      <div class="player-nameplate m3d-plate"></div>
+    </div>
     <div class="pin-body-view">
       <div class="player-shadow"></div>
       <img class="player-figure" alt="" src="${BANDIT}">
@@ -538,6 +692,47 @@ function makePin() {
   `;
   $("pins").appendChild(el);
   return el;
+}
+
+function applySkinTo3DModel(el, skinUrl) {
+  if (el.dataset.skin3d === skinUrl) return;
+  el.dataset.skin3d = skinUrl;
+  const setBg = (sel, pos) => {
+    const f = el.querySelector(sel);
+    if (f) {
+      f.style.backgroundImage = `url("${skinUrl}")`;
+      if (pos) f.style.backgroundPosition = pos;
+    }
+  };
+  // Head mapping (scale 2x: 128x128)
+  setBg(".m-head .f-f", "-16px -16px");
+  setBg(".m-head .f-b", "-48px -16px");
+  setBg(".m-head .f-l", "-32px -16px");
+  setBg(".m-head .f-r", "0px -16px");
+  setBg(".m-head .f-t", "-16px 0px");
+  setBg(".m-head .f-d", "-32px 0px");
+
+  // Body mapping
+  setBg(".m-body .f-f", "-40px -40px");
+  setBg(".m-body .f-b", "-64px -40px");
+  setBg(".m-body .f-l", "-32px -40px");
+  setBg(".m-body .f-r", "-56px -40px");
+  setBg(".m-body .f-t", "-40px -32px");
+  setBg(".m-body .f-d", "-56px -32px");
+
+  // Arms mapping
+  setBg(".m-arm-l .f-f", "-88px -40px");
+  setBg(".m-arm-l .f-b", "-104px -40px");
+  setBg(".m-arm-l .f-l", "-80px -40px");
+  setBg(".m-arm-r .f-f", "-88px -40px");
+  setBg(".m-arm-r .f-b", "-104px -40px");
+  setBg(".m-arm-r .f-r", "-96px -40px");
+
+  // Legs mapping
+  setBg(".m-leg-l .f-f", "-8px -40px");
+  setBg(".m-leg-l .f-b", "-24px -40px");
+  setBg(".m-leg-r .f-f", "-8px -40px");
+  setBg(".m-leg-r .f-b", "-24px -40px");
 }
 
 function drawRing(V, P, W, H) {
@@ -654,7 +849,13 @@ function pinsFrame() {
       const labelText = p.friend ? (pName || "Друг") : (pName ? `${pName} [чужой]` : "Чужой " + p.id.slice(0, 4));
       const lbl = labelText + (dr != null ? " · " + dr + " бл." : "");
 
-      // 1. Update Body View
+      // 1. Update 3D Character View
+      const skinUrl = pName ? `https://minotar.net/skin/${encodeURIComponent(pName)}` : "https://minotar.net/skin/MHF_Steve";
+      applySkinTo3DModel(el, skinUrl);
+      const m3dPlate = el.querySelector(".m3d-plate");
+      if (m3dPlate && m3dPlate.textContent !== lbl) m3dPlate.textContent = lbl;
+
+      // 2. Update 2D Body View
       const bodyImg = el.querySelector(".player-figure");
       const expectedBody = pName ? `https://minotar.net/armor/body/${encodeURIComponent(pName)}/120.png` : BANDIT;
       if (bodyImg.dataset.src !== expectedBody) {
@@ -665,17 +866,17 @@ function pinsFrame() {
           bodyImg.src = pName ? `https://mc-heads.net/body/${encodeURIComponent(pName)}/120.png` : BANDIT;
         };
       }
-      const np = el.querySelector(".player-nameplate");
-      if (np.textContent !== lbl) np.textContent = lbl;
+      const np = el.querySelector(".pin-body-view .player-nameplate");
+      if (np && np.textContent !== lbl) np.textContent = lbl;
 
-      // 2. Update Cube View
+      // 3. Update Cube View
       const headSrc = pName ? `https://minotar.net/helm/${encodeURIComponent(pName)}/64.png` : BANDIT;
       if (el.dataset.headSrc !== headSrc) {
         el.dataset.headSrc = headSrc;
         el.querySelectorAll(".cube i").forEach((f) => { f.style.backgroundImage = `url("${headSrc}")`; });
       }
       const pl = el.querySelector(".pl");
-      if (pl.textContent !== lbl) pl.textContent = lbl;
+      if (pl && pl.textContent !== lbl) pl.textContent = lbl;
     }
   }
   for (const id in pins) if (!alive.has(id)) { pins[id].remove(); delete pins[id]; }
@@ -700,6 +901,11 @@ function updatePin() {
   const dr = distR(sel);
   const labelText = sel.friend ? (pName || "Друг") : (pName ? `${pName} [чужой]` : "Чужой " + sel.id.slice(0, 4));
   const lbl = labelText + (dr != null ? " · " + dr + " бл." : "");
+
+  // 3D Model View
+  const skinUrl = pName ? `https://minotar.net/skin/${encodeURIComponent(pName)}` : "https://minotar.net/skin/MHF_Steve";
+  applySkinTo3DModel(pin, skinUrl);
+  $("body3dpinlabel").textContent = lbl;
 
   // Body View
   const bodyImg = pin.querySelector(".player-figure");
@@ -835,6 +1041,64 @@ window.addEventListener("resize", () => {
 $("follow").addEventListener("change", () => { lastCam = null; render(); });
 $("map").addEventListener("load", () => { mapReady = true; cam = null; lastFind = 0; lastCam = null; render(); });
 
+// ---- Picture-in-Picture (PiP) Window over game ----
+async function togglePiP() {
+  if ("documentPictureInPicture" in window) {
+    if (window.documentPictureInPicture.window) {
+      window.documentPictureInPicture.window.close();
+      return;
+    }
+    try {
+      const pipWin = await window.documentPictureInPicture.requestWindow({
+        width: 500,
+        height: 380,
+      });
+      // Copy styles
+      document.querySelectorAll('style, link[rel="stylesheet"]').forEach((s) => {
+        pipWin.document.head.appendChild(s.cloneNode(true));
+      });
+      pipWin.document.body.className = "mini-mode";
+      pipWin.document.body.style.margin = "0";
+
+      const pipMain = document.createElement("main");
+      pipMain.style.height = "100vh";
+      pipMain.style.display = "grid";
+      pipMain.style.gridTemplateRows = "1fr 140px";
+      pipWin.document.body.appendChild(pipMain);
+
+      const mapWrap = $("mapwrap");
+      const radarCanvas = $("radar");
+      const mainEl = document.querySelector("main");
+
+      pipMain.appendChild(mapWrap);
+      pipMain.appendChild(radarCanvas);
+
+      pipWin.addEventListener("pagehide", () => {
+        mainEl.appendChild(mapWrap);
+        mainEl.appendChild(radarCanvas);
+        render();
+      });
+      render();
+      return;
+    } catch (e) {
+      console.warn("Doc PiP error:", e);
+    }
+  }
+
+  // Fallback: compact popout window
+  const miniWin = window.open(
+    location.origin + location.pathname + "?mini=1",
+    "SignalkaPiP",
+    "width=520,height=420,menubar=no,toolbar=no,location=no,status=no"
+  );
+  if (!miniWin) {
+    alert("Разрешите всплывающие окна в браузере, чтобы открыть окно карты поверх игры!");
+  }
+}
+
+$("btnPipTool").addEventListener("click", togglePiP);
+$("headerPip").addEventListener("click", togglePiP);
+
 // ---- remote console ----
 let cSince = 0, cTimer = null;
 const cHist = []; let cHi = 0;
@@ -875,7 +1139,7 @@ function setTab(t) {
   clearInterval(cTimer);
   if (on) { cPoll(); cTimer = setInterval(cPoll, 1000); $("cline").focus(); }
 }
-document.querySelectorAll(".tab").forEach((b) => (b.onclick = () => setTab(b.dataset.t)));
+document.querySelectorAll(".tab[data-t]").forEach((b) => (b.onclick = () => setTab(b.dataset.t)));
 document.querySelectorAll(".qk").forEach((b) => (b.onclick = () => { $("cline").value = b.dataset.c + " "; $("cline").focus(); if (["help", "list", "tracks", "radar", "objects", "size"].includes(b.dataset.c)) { $("cline").value = ""; cSend(b.dataset.c); } }));
 $("cform").addEventListener("submit", (e) => { e.preventDefault(); const v = $("cline").value; $("cline").value = ""; cSend(v); });
 $("cline").addEventListener("keydown", (e) => {
@@ -916,11 +1180,12 @@ if (fG !== null) $("fHideGlue").checked = fG === "true";
 
 // init pin style
 const pinSelect = $("pinStyle");
-const savedPinStyle = localStorage.getItem("radar_pin_style") || "body";
+const savedPinStyle = localStorage.getItem("radar_pin_style") || "model3d";
 pinSelect.value = savedPinStyle;
 function updatePinStyleUI() {
   const v = pinSelect.value;
   localStorage.setItem("radar_pin_style", v);
+  $("mapwrap").classList.toggle("mode-model3d", v === "model3d");
   $("mapwrap").classList.toggle("mode-body", v === "body");
   $("mapwrap").classList.toggle("mode-cube", v === "cube");
 }

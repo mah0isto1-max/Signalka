@@ -489,3 +489,45 @@ setInterval(() => {
 }, 5000);
 
 server.listen(PORT, () => console.log("Guard site on port " + PORT));
+
+// Poll BlueMap's players.json to capture offline/cracked and online player nicknames
+function pollServerPlayers() {
+  const req = http.get({
+    host: MAP_ORIGIN.hostname,
+    port: MAP_ORIGIN.port || 80,
+    path: "/maps/world/live/players.json",
+    headers: { host: MAP_ORIGIN.host }
+  }, (res) => {
+    if (res.statusCode !== 200) return;
+    let data = "";
+    res.on("data", (c) => (data += c));
+    res.on("end", () => {
+      try {
+        const j = JSON.parse(data);
+        if (Array.isArray(j.players)) {
+          let updated = false;
+          for (const pl of j.players) {
+            if (pl.uuid && pl.name) {
+              const clean = pl.uuid.replace(/-/g, "").toLowerCase();
+              if (uuidToNick[pl.uuid] !== pl.name || uuidToNick[clean] !== pl.name) {
+                uuidToNick[pl.uuid] = pl.name;
+                uuidToNick[clean] = pl.name;
+                updated = true;
+              }
+              if (players[pl.uuid] && !players[pl.uuid].name) {
+                players[pl.uuid].name = pl.name;
+                broadcast();
+              }
+            }
+          }
+          if (updated) saveUuidCache();
+        }
+      } catch (e) {}
+    });
+  });
+  req.on("error", () => {});
+  req.setTimeout(5000, () => req.destroy());
+}
+setInterval(pollServerPlayers, 3000);
+pollServerPlayers();
+

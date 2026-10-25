@@ -147,12 +147,36 @@ local function infoOf(t)
 end
 
 local uuidNameCache = {}
+
+local function pollBlueMapPlayers()
+  local ok, r = pcall(http.get, "http://mc.vestalis.xyz:25971/maps/world/live/players.json")
+  if ok and r then
+    local txt = r.readAll()
+    r.close()
+    local j = txt and textutils.unserializeJSON(txt)
+    if j and type(j.players) == "table" then
+      for _, pl in ipairs(j.players) do
+        if pl.uuid and pl.name then
+          uuidNameCache[pl.uuid] = pl.name
+          uuidNameCache[tostring(pl.uuid):lower():gsub("[^%x]", "")] = pl.name
+        end
+      end
+    end
+  end
+end
+
 local function resolvePlayerName(uuid)
   if not uuid or uuid == "" then return "" end
   if data.friends[uuid] then return data.friends[uuid] end
   if uuidNameCache[uuid] then return uuidNameCache[uuid] end
   local clean = tostring(uuid):lower():gsub("[^%x]", "")
+  if uuidNameCache[clean] then return uuidNameCache[clean] end
   if #clean ~= 32 then return "" end
+
+  -- Try BlueMap live server players (has offline/cracked players!)
+  pollBlueMapPlayers()
+  if uuidNameCache[uuid] then return uuidNameCache[uuid] end
+  if uuidNameCache[clean] then return uuidNameCache[clean] end
 
   -- 1. Try our own guard site (which already resolves and caches names)
   if data.site and data.site ~= "" then
