@@ -1298,9 +1298,40 @@ function drawRadar(ps, os) {
 }
 
 function connect() {
-  const es = new EventSource("/api/stream");
-  es.onmessage = (e) => { state = JSON.parse(e.data); state.objects = state.objects || []; track(state.players.concat(state.objects)); render(); };
-  es.onerror = () => { state.online = false; render(); };
+  const applyState = (data) => {
+    if (!data || typeof data !== "object") return;
+    state = data;
+    state.objects = state.objects || [];
+    state.players = state.players || [];
+    track(state.players.concat(state.objects));
+    render();
+  };
+
+  const pollState = async () => {
+    try {
+      const res = await fetch("/api/state");
+      if (res.ok) {
+        const j = await res.json();
+        applyState(j);
+      }
+    } catch (e) {}
+  };
+
+  let es = null;
+  const startStream = () => {
+    if (es) { try { es.close(); } catch (e) {} }
+    es = new EventSource("/api/stream");
+    es.onmessage = (e) => {
+      try { applyState(JSON.parse(e.data)); } catch (err) {}
+    };
+    es.onerror = () => {
+      pollState();
+    };
+  };
+
+  startStream();
+  setInterval(pollState, 2500);
+  pollState();
 }
 window.addEventListener("resize", () => {
   const showPlayers = $("fPlayers").checked;
