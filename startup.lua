@@ -368,9 +368,9 @@ local function siteLoop()
       end
       sleep(3)
     elseif ok then
-      if lastErr then
-        say("Site connected successfully!")
-        lastErr = nil
+      if lastErr ~= "ok" then
+        say("Site: CONNECTED!")
+        lastErr = "ok"
       end
       if cmds and #cmds > 0 then
         for _, c in ipairs(cmds) do
@@ -735,7 +735,7 @@ end
 local function cmdStatus()
   say("=== GUARD STATUS ===")
   say("Site: " .. (data.site ~= "" and data.site or "NOT SET (type: site https://...)"))
-  say("Key: " .. (data.key ~= "" and "SET (hidden)" or "NOT SET (type: key <secret>)"))
+  say("Key: " .. (data.key ~= "" and data.key or "NOT SET (type: key 5555)"))
   if data.radar then
     say(("Radar circle: X=%d Y=%d Z=%d Range=%s"):format(data.radar.x, data.radar.y, data.radar.z, tostring(data.radar.range)))
   else
@@ -744,6 +744,8 @@ local function cmdStatus()
   say("Webhook: " .. (data.webhook ~= "" and "SET" or "NOT SET"))
   local fc = 0 for _ in pairs(data.friends) do fc = fc + 1 end
   say("Friends: " .. fc)
+  local ok, err = pushSite()
+  say("Test push: " .. (ok and "OK (connected)" or ("ERROR: " .. tostring(err))))
 end
 
 local function runLine(line)
@@ -759,6 +761,9 @@ local function runLine(line)
   elseif cmd == "list" then cmdList()
   elseif cmd == "del" then cmdDel(arg)
   elseif cmd == "status" then cmdStatus()
+  elseif cmd == "push" or cmd == "testsite" then
+    local ok, err = pushSite()
+    say("Push: " .. (ok and "OK (site updated)" or ("FAILED: " .. tostring(err))))
   elseif cmd == "webhook" then
     if arg and arg ~= "" then
       data.webhook = arg
