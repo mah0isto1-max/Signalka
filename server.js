@@ -122,7 +122,6 @@ function resolveUuid(rawId) {
 }
 
 // ---- password gate + remote console ----
-const crypto = require("crypto");
 const PASS = process.env.SITE_PASS || "5555";
 const TOKEN = crypto.createHash("sha256").update("signalka|" + PASS + "|" + KEY).digest("hex");
 const fails = {};          // ip -> {n, until}
