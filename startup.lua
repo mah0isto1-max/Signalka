@@ -170,9 +170,17 @@ local function pushSite()
   for _, t in ipairs(getAllTracks()) do
     local p = t.position or {}
     if t.category == "PLAYER" then
+      local pName = data.friends[t.id]
+      if not pName or pName == "" then
+        pName = (type(t.name) == "string" and t.name ~= "" and t.name)
+             or (type(t.username) == "string" and t.username ~= "" and t.username)
+             or (type(t.displayName) == "string" and t.displayName ~= "" and t.displayName)
+             or (type(t.player) == "string" and t.player ~= "" and t.player)
+             or ""
+      end
       list[#list + 1] = {
         id = t.id,
-        name = data.friends[t.id] or "",
+        name = pName,
         friend = data.friends[t.id] ~= nil,
         x = p.x, y = p.y, z = p.z,
       }
@@ -234,8 +242,12 @@ local function guardLoop()
       if not data.friends[t.id] then
         if not lastAlert[t.id] or now() - lastAlert[t.id] > data.cooldown then
           lastAlert[t.id] = now()
-          local msg = ("ALERT! Unknown player\nUUID: %s\nPos: x=%d y=%d z=%d\n%s"):format(
-            t.id, t.position.x, t.position.y, t.position.z, mapLink(t.position))
+          local pName = (type(t.name) == "string" and t.name ~= "" and t.name)
+                     or (type(t.username) == "string" and t.username ~= "" and t.username)
+                     or ""
+          local who = pName ~= "" and (pName .. " (" .. t.id:sub(1, 8) .. ")") or t.id
+          local msg = ("ALERT! Unknown player: %s\nPos: x=%d y=%d z=%d\n%s"):format(
+            who, t.position.x, t.position.y, t.position.z, mapLink(t.position))
           if data.site ~= "" then msg = msg .. "\nLive: " .. data.site end
           sendDiscord(msg)
         end

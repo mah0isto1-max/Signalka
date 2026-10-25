@@ -1,6 +1,7 @@
 // Guard site: receives radar data from ComputerCraft, shows it live.
 // No dependencies. Env: KEY (secret, required), PORT (set by host).
 const http = require("http");
+const https = require("https");
 const fs = require("fs");
 const path = require("path");
 
@@ -15,6 +16,80 @@ let lastUpdate = 0;
 let objects = [];     // non-player contacts (aircraft, contraptions...)
 let radar = null;     // {x,y,z,range} sent by the computer
 const clients = new Set();
+
+// ---- UUID -> Nickname resolver & cache ----
+const UUID_CACHE_FILE = path.join(__dirname, "uuid_cache.json");
+let uuidToNick = {};
+try {
+  if (fs.existsSync(UUID_CACHE_FILE)) {
+    uuidToNick = JSON.parse(fs.readFileSync(UUID_CACHE_FILE, "utf8")) || {};
+  }
+} catch (e) {}
+
+function saveUuidCache() {
+  try {
+    fs.writeFileSync(UUID_CACHE_FILE, JSON.stringify(uuidToNick, null, 2));
+  } catch (e) {}
+}
+
+const pendingLookups = new Set();
+function resolveUuid(rawId) {
+  if (!rawId || typeof rawId !== "string") return;
+  const clean = rawId.replace(/-/g, "").toLowerCase();
+  if (clean.length !== 32 || !/^[0-9a-f]{32}$/.test(clean)) return;
+  if (uuidToNick[rawId] || uuidToNick[clean]) return;
+  if (pendingLookups.has(clean)) return;
+  pendingLookups.add(clean);
+
+  // Try Mojang sessionserver first
+  const req = https.get(`https://sessionserver.mojang.com/session/minecraft/profile/${clean}`, (res) => {
+    if (res.statusCode === 200) {
+      let data = "";
+      res.on("data", (c) => (data += c));
+      res.on("end", () => {
+        try {
+          const j = JSON.parse(data);
+          if (j && j.name) {
+            uuidToNick[rawId] = j.name;
+            uuidToNick[clean] = j.name;
+            saveUuidCache();
+            if (players[rawId] && !players[rawId].name) {
+              players[rawId].name = j.name;
+              broadcast();
+            }
+          }
+        } catch (e) {}
+        pendingLookups.delete(clean);
+      });
+    } else {
+      // Fallback to playerdb.co
+      const req2 = https.get(`https://playerdb.co/api/player/minecraft/${clean}`, (pr) => {
+        let pdata = "";
+        pr.on("data", (c) => (pdata += c));
+        pr.on("end", () => {
+          try {
+            const pj = JSON.parse(pdata);
+            if (pj && pj.success && pj.data && pj.data.player && pj.data.player.username) {
+              const nick = pj.data.player.username;
+              uuidToNick[rawId] = nick;
+              uuidToNick[clean] = nick;
+              saveUuidCache();
+              if (players[rawId] && !players[rawId].name) {
+                players[rawId].name = nick;
+                broadcast();
+              }
+            }
+          } catch (e) {}
+          pendingLookups.delete(clean);
+        });
+      });
+      req2.on("error", () => pendingLookups.delete(clean));
+      req2.setTimeout(5000, () => req2.destroy());
+    }
+  });
+  req.on("error", () => pendingLookups.delete(clean));
+  req.setTimeout(5000, () => req.destroy());
+}
 
 // ---- password gate + remote console ----
 const crypto = require("crypto");
@@ -173,8 +248,8 @@ function guardMarkerSet() {
   const markers = {};
   for (const p of Object.values(players)) {
     const color = p.friend ? "#5fc58a" : "#ff6b55";
-    const label = p.friend ? p.name || "Друг" : "Чужой " + p.id.slice(0, 4);
-    const img = p.friend && p.name
+    const label = p.friend ? (p.name || "Друг") : (p.name ? `${p.name} (чужой)` : "Чужой " + p.id.slice(0, 4));
+    const img = p.name
       ? "https://minotar.net/helm/" + encodeURIComponent(p.name) + "/32.png"
       : BANDIT_URI;
     markers["p-" + p.id] = {
@@ -268,9 +343,17 @@ const server = http.createServer((req, res) => {
       const next = {};
       for (const p of list) {
         if (!p || typeof p.id !== "string") continue;
+        let nick = typeof p.name === "string" ? p.name : "";
+        if (!nick) {
+          nick = uuidToNick[p.id] || uuidToNick[p.id.replace(/-/g, "").toLowerCase()] || "";
+          if (!nick) resolveUuid(p.id);
+        } else {
+          uuidToNick[p.id] = nick;
+          uuidToNick[p.id.replace(/-/g, "").toLowerCase()] = nick;
+        }
         next[p.id] = {
           id: p.id,
-          name: typeof p.name === "string" ? p.name : "",
+          name: nick,
           friend: !!p.friend,
           x: +p.x || 0,
           y: +p.y || 0,
@@ -296,6 +379,19 @@ const server = http.createServer((req, res) => {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(JSON.stringify({ ok: true, cmds }));
     });
+  }
+
+  if (url.pathname === "/api/resolve") {
+    const rawUuid = url.searchParams.get("uuid") || "";
+    const clean = rawUuid.replace(/-/g, "").toLowerCase();
+    const name = uuidToNick[rawUuid] || uuidToNick[clean] || null;
+    if (name) {
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      return res.end(JSON.stringify({ uuid: rawUuid, name }));
+    }
+    resolveUuid(rawUuid);
+    res.writeHead(202, { "Content-Type": "application/json; charset=utf-8" });
+    return res.end(JSON.stringify({ uuid: rawUuid, pending: true }));
   }
 
   if (url.pathname === "/api/debug") {
