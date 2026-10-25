@@ -150,9 +150,9 @@ local uuidNameCache = {}
 
 local function pollBlueMapPlayers()
   local ok, r = pcall(http.get, "http://mc.vestalis.xyz:25971/maps/world/live/players.json")
-  if ok and r then
+  if ok and r and type(r.readAll) == "function" then
     local txt = r.readAll()
-    r.close()
+    pcall(function() r.close() end)
     local j = txt and textutils.unserializeJSON(txt)
     if j and type(j.players) == "table" then
       for _, pl in ipairs(j.players) do
@@ -182,9 +182,9 @@ local function resolvePlayerName(uuid)
   if data.site and data.site ~= "" then
     local sUrl = data.site:gsub("/+$", "") .. "/api/resolve?uuid=" .. textutils.urlEncode(uuid)
     local ok, res = pcall(http.get, sUrl)
-    if ok and res then
+    if ok and res and type(res.readAll) == "function" then
       local txt = res.readAll()
-      res.close()
+      pcall(function() res.close() end)
       local j = txt and textutils.unserializeJSON(txt)
       if j and j.name then
         uuidNameCache[uuid] = j.name
@@ -195,9 +195,9 @@ local function resolvePlayerName(uuid)
 
   -- 2. Try PlayerDB
   local ok2, res2 = pcall(http.get, "https://playerdb.co/api/player/minecraft/" .. clean)
-  if ok2 and res2 then
+  if ok2 and res2 and type(res2.readAll) == "function" then
     local txt = res2.readAll()
-    res2.close()
+    pcall(function() res2.close() end)
     local j = txt and textutils.unserializeJSON(txt)
     if j and j.success and j.data and j.data.player and j.data.player.username then
       local n = j.data.player.username
@@ -208,9 +208,9 @@ local function resolvePlayerName(uuid)
 
   -- 3. Try Mojang sessionserver
   local ok3, res3 = pcall(http.get, "https://sessionserver.mojang.com/session/minecraft/profile/" .. clean)
-  if ok3 and res3 then
+  if ok3 and res3 and type(res3.readAll) == "function" then
     local txt = res3.readAll()
-    res3.close()
+    pcall(function() res3.close() end)
     local j = txt and textutils.unserializeJSON(txt)
     if j and j.name then
       uuidNameCache[uuid] = j.name
@@ -524,6 +524,54 @@ local function cmdAddId(arg)
   save()
 end
 
+-- inventory scanner: tries to find any inventory peripheral and list its contents
+local function cmdInv(arg)
+  -- Try to find an inventory scanner peripheral (e.g. from Plethora or similar)
+  local scanner = peripheral.find("plethora:scanner") or peripheral.find("inventoryScanner")
+                  or peripheral.find("inventory_scanner")
+  if scanner and type(scanner.getInventory) == "function" then
+    local ok, inv = pcall(scanner.getInventory)
+    if ok and type(inv) == "table" then
+      local lines = {}
+      for slot, item in pairs(inv) do
+        if item and item.name then
+          lines[#lines + 1] = ("  [%d] %s x%d"):format(slot, item.name, item.count or 1)
+        end
+      end
+      table.sort(lines)
+      if #lines == 0 then say("Инвентарь пуст") else
+        say("Инвентарь (" .. #lines .. " ячеек):")
+        for _, l in ipairs(lines) do say(l) end
+      end
+      return
+    end
+  end
+  -- Fallback: look for any chest/shulkerbox peripheral nearby
+  for _, name in ipairs(peripheral.getNames()) do
+    local ptype = peripheral.getType(name) or ""
+    if ptype:find("chest") or ptype:find("shulker") or ptype:find("barrel") then
+      local p = peripheral.wrap(name)
+      if p and type(p.list) == "function" then
+        local ok2, items = pcall(p.list)
+        if ok2 and type(items) == "table" then
+          say("Содержимое " .. name .. ":")
+          local any = false
+          for slot, item in pairs(items) do
+            if item then
+              say(("  [%d] %s x%d"):format(slot, item.name or "?", item.count or 1))
+              any = true
+            end
+          end
+          if not any then say("  Пусто") end
+          return
+        end
+      end
+    end
+  end
+  say("Периферал для инвентаря не найден.")
+  say("Подключите Inventory Scanner (Plethora) или поставьте сундук рядом с компьютером.")
+end
+
 local function cmdList()
   local any = false
   for id, nick in pairs(data.friends) do
@@ -645,6 +693,7 @@ local function help()
   say("tracks - what the radar reports, saves tracks_dump.txt")
   say("size <name> <len> <wid> <hgt> - set box size of a construction")
   say("periph - list peripherals+methods, saves periph_dump.txt")
+  say("inv - scan nearby inventory / inventory peripheral")
   say("list - show friends")
   say("del <nick> - remove friend")
   say("webhook <url> - set webhook")
@@ -663,6 +712,7 @@ local function runLine(line)
   elseif cmd == "tracks" then cmdTracks()
   elseif cmd == "size" then cmdSize(arg)
   elseif cmd == "periph" then cmdPeriph()
+  elseif cmd == "inv" then cmdInv(arg)
   elseif cmd == "list" then cmdList()
   elseif cmd == "del" then cmdDel(arg)
   elseif cmd == "webhook" then
