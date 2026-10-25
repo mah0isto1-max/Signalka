@@ -148,22 +148,27 @@ end
 
 local uuidNameCache = {}
 
+-- safe http get: catches any error including "closed file" on concurrent access
+local function safeGet(url)
+  local ok, r = pcall(http.get, url)
+  if not ok or not r or type(r.readAll) ~= "function" then return nil end
+  local txt
+  pcall(function() txt = r.readAll() end)
+  pcall(function() r.close() end)
+  return txt
+end
+
 local pollBusy = false
 local function pollBlueMapPlayers()
   if pollBusy then return end
   pollBusy = true
-  local ok, r = pcall(http.get, "http://mc.vestalis.xyz:25971/maps/world/live/players.json")
-  if ok and r and type(r.readAll) == "function" then
-    local txt
-    pcall(function() txt = r.readAll() end)
-    pcall(function() r.close() end)
-    local j = txt and textutils.unserializeJSON(txt)
-    if j and type(j.players) == "table" then
-      for _, pl in ipairs(j.players) do
-        if pl.uuid and pl.name then
-          uuidNameCache[pl.uuid] = pl.name
-          uuidNameCache[tostring(pl.uuid):lower():gsub("[^%x]", "")] = pl.name
-        end
+  local txt = safeGet("http://mc.vestalis.xyz:25971/maps/world/live/players.json")
+  local j = txt and textutils.unserializeJSON(txt)
+  if j and type(j.players) == "table" then
+    for _, pl in ipairs(j.players) do
+      if pl.uuid and pl.name then
+        uuidNameCache[pl.uuid] = pl.name
+        uuidNameCache[tostring(pl.uuid):lower():gsub("[^%x]", "")] = pl.name
       end
     end
   end
@@ -183,44 +188,29 @@ local function resolvePlayerName(uuid)
   if uuidNameCache[uuid] then return uuidNameCache[uuid] end
   if uuidNameCache[clean] then return uuidNameCache[clean] end
 
-  -- 1. Try our own guard site (which already resolves and caches names)
+  -- 1. Try our own guard site
   if data.site and data.site ~= "" then
     local sUrl = data.site:gsub("/+$", "") .. "/api/resolve?uuid=" .. textutils.urlEncode(uuid)
-    local ok, res = pcall(http.get, sUrl)
-    if ok and res and type(res.readAll) == "function" then
-      local txt = res.readAll()
-      pcall(function() res.close() end)
-      local j = txt and textutils.unserializeJSON(txt)
-      if j and j.name then
-        uuidNameCache[uuid] = j.name
-        return j.name
-      end
-    end
+    local txt = safeGet(sUrl)
+    local j = txt and textutils.unserializeJSON(txt)
+    if j and j.name then uuidNameCache[uuid] = j.name return j.name end
   end
 
   -- 2. Try PlayerDB
-  local ok2, res2 = pcall(http.get, "https://playerdb.co/api/player/minecraft/" .. clean)
-  if ok2 and res2 and type(res2.readAll) == "function" then
-    local txt = res2.readAll()
-    pcall(function() res2.close() end)
-    local j = txt and textutils.unserializeJSON(txt)
-    if j and j.success and j.data and j.data.player and j.data.player.username then
-      local n = j.data.player.username
-      uuidNameCache[uuid] = n
-      return n
-    end
+  local txt2 = safeGet("https://playerdb.co/api/player/minecraft/" .. clean)
+  local j2 = txt2 and textutils.unserializeJSON(txt2)
+  if j2 and j2.success and j2.data and j2.data.player and j2.data.player.username then
+    local n = j2.data.player.username
+    uuidNameCache[uuid] = n
+    return n
   end
 
   -- 3. Try Mojang sessionserver
-  local ok3, res3 = pcall(http.get, "https://sessionserver.mojang.com/session/minecraft/profile/" .. clean)
-  if ok3 and res3 and type(res3.readAll) == "function" then
-    local txt = res3.readAll()
-    pcall(function() res3.close() end)
-    local j = txt and textutils.unserializeJSON(txt)
-    if j and j.name then
-      uuidNameCache[uuid] = j.name
-      return j.name
-    end
+  local txt3 = safeGet("https://sessionserver.mojang.com/session/minecraft/profile/" .. clean)
+  local j3 = txt3 and textutils.unserializeJSON(txt3)
+  if j3 and j3.name then
+    uuidNameCache[uuid] = j3.name
+    return j3.name
   end
 
   return ""
