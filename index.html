@@ -19,6 +19,7 @@ if (window.top !== window.self) {
   :root {
     --bg: #141a17; --panel: #1b2420; --ink: #e4ebe5; --muted: #93a398;
     --line: #2f3b34; --alert: #ff6b55; --ok: #5fc58a; --accent: #1f5f8b;
+    --model-scale: 1;
     color-scheme: dark;
   }
   * { box-sizing: border-box; }
@@ -204,7 +205,9 @@ if (window.top !== window.self) {
   }
   .steve3d-wrap {
     position: absolute; left: 0; bottom: 0; width: 0; height: 0;
-    transform-style: preserve-3d; transform: rotateX(-15deg) rotateY(20deg);
+    transform-style: preserve-3d;
+    transform-origin: bottom center;
+    transform: scale(var(--model-scale, 1)) rotateX(-15deg) rotateY(20deg);
   }
   .b3d { position: absolute; transform-style: preserve-3d; }
   .b3d > div {
@@ -273,7 +276,7 @@ if (window.top !== window.self) {
     background: rgba(16, 22, 19, 0.9); border: 2px solid var(--c, #ff6b55);
     box-shadow: 0 2px 8px rgba(0,0,0,0.6); pointer-events: none;
   }
-  .m3d-plate { bottom: 78px; }
+  .m3d-plate { bottom: calc(78px * var(--model-scale, 1)); }
 
   /* Cube Pin View */
   #pin { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; perspective: 400px; display: none; z-index: 5; }
@@ -409,12 +412,22 @@ if (window.top !== window.self) {
       <span>🎯</span>
       <select id="pipTargetSelect" title="Выбор игрока для слежения"></select>
       <select id="pipZoomSelect" title="Масштаб (зум) камеры">
-        <option value="auto">Авто-зум</option>
-        <option value="60">60 бл.</option>
-        <option value="120">120 бл.</option>
-        <option value="200" selected>200 бл.</option>
-        <option value="350">350 бл.</option>
-        <option value="600">600 бл.</option>
+        <option value="auto" selected>Сохранять зум (колесо мыши)</option>
+        <option value="60">60 бл. (в упор)</option>
+        <option value="120">120 бл. (близко)</option>
+        <option value="200">200 бл. (средне)</option>
+        <option value="350">350 бл. (далеко)</option>
+        <option value="600">600 бл. (обзор)</option>
+      </select>
+      <select id="pipModelScale" title="Размер 3D моделей игроков">
+        <option value="0.5">3D: 0.5x</option>
+        <option value="0.75">3D: 0.75x</option>
+        <option value="1" selected>3D: 1x</option>
+        <option value="1.25">3D: 1.25x</option>
+        <option value="1.5">3D: 1.5x</option>
+        <option value="2">3D: 2x</option>
+        <option value="2.5">3D: 2.5x</option>
+        <option value="3">3D: 3x</option>
       </select>
       <label style="cursor:pointer;display:flex;align-items:center;gap:3px" title="Следить за игроком"><input type="checkbox" id="pipFollow" checked> Следить</label>
       <button type="button" id="pipExit" title="Вернуть на страницу">✕</button>
@@ -423,10 +436,10 @@ if (window.top !== window.self) {
       <label title="Масштаб (приближение) камеры при слежении за игроком">
         Масштаб:
         <select id="camZoomSelect">
-          <option value="auto">Как на карте (колесо мыши)</option>
+          <option value="auto" selected>Как на карте (колесо мыши)</option>
           <option value="50">50 бл. (в упор)</option>
           <option value="100">100 бл. (близко)</option>
-          <option value="150" selected>150 бл. (стандарт)</option>
+          <option value="150">150 бл. (стандарт)</option>
           <option value="250">250 бл. (средне)</option>
           <option value="400">400 бл. (далеко)</option>
           <option value="700">700 бл. (обзор)</option>
@@ -438,6 +451,19 @@ if (window.top !== window.self) {
           <option value="model3d">3D модель игрока (со скином)</option>
           <option value="body">2D проекция тела</option>
           <option value="cube">Вращающийся кубик</option>
+        </select>
+      </label>
+      <label title="Размер 3D моделей игроков на карте">
+        Размер 3D:
+        <select id="modelScaleSelect">
+          <option value="0.5">0.5x (мелкий)</option>
+          <option value="0.75">0.75x</option>
+          <option value="1" selected>1x (обычный)</option>
+          <option value="1.25">1.25x</option>
+          <option value="1.5">1.5x (крупный)</option>
+          <option value="2">2x (большой)</option>
+          <option value="2.5">2.5x</option>
+          <option value="3">3x (гигант)</option>
         </select>
       </label>
       <button type="button" id="btnPipTool" title="Открыть плавающее окно поверх всех окон (Chrome PiP)">📺 PiP</button>
@@ -632,14 +658,40 @@ function isGlueObject(o) {
 
 let state = { players: [], objects: [], online: false };
 let selected = null;
+let userUnselected = false;
 let lastCam = null, lastCamTime = 0, mapReady = false;
 
 let currentZoomDist = +localStorage.getItem("radar_zoom_dist") || 150;
 let lastKnownRot = 0;
 let lastKnownPitch = 0;
 
+function getBlueMapControlsManager() {
+  try {
+    const w = $("map").contentWindow;
+    return (w && w.bluemap && w.bluemap.mapViewer && w.bluemap.mapViewer.controlsManager) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function isTrackingEnabled() {
+  const isPop = document.body.classList.contains("pop-mode") || window.isPipMode;
+  const pb = $el("pipFollow");
+  const fb = $el("follow");
+  if (isPop && pb) return pb.checked;
+  if (fb) return fb.checked;
+  return pb ? pb.checked : false;
+}
+
 function readCurrentMapCamera() {
   try {
+    const cm = getBlueMapControlsManager();
+    if (cm && isFinite(cm.distance) && cm.distance > 0) {
+      currentZoomDist = Math.round(cm.distance);
+      if (isFinite(cm.rotation)) lastKnownRot = cm.rotation;
+      if (isFinite(cm.angle)) lastKnownPitch = cm.angle;
+      return;
+    }
     const w = $("map").contentWindow;
     if (!w) return;
     const h = (w.location.hash || "").replace(/^#/, "");
@@ -647,9 +699,7 @@ function readCurrentMapCamera() {
     if (parts.length >= 5) {
       const d = parseFloat(parts[4]);
       if (isFinite(d) && d >= 10 && d <= 5000) {
-        if (!$("camZoomSelect") || $("camZoomSelect").value === "auto") {
-          currentZoomDist = Math.round(d);
-        }
+        currentZoomDist = Math.round(d);
       }
       const rot = parseFloat(parts[5]);
       if (isFinite(rot)) lastKnownRot = rot;
@@ -699,7 +749,7 @@ function render() {
   }
 
   if (selected && !ps.find((p) => p.id === selected) && !os.find((o) => o.id === selected)) selected = null;
-  if (!selected) {
+  if (!selected && isTrackingEnabled() && !userUnselected) {
     const bad = ps.find((p) => !p.friend) || ps[0] || os[0];
     if (bad) selected = bad.id;
   }
@@ -727,7 +777,11 @@ function render() {
     s.textContent = `x ${Math.floor(p.x)}  y ${Math.floor(p.y)}  z ${Math.floor(p.z)}` + (p.id ? `  ·  ${p.id.slice(0, 8)}` : "") + (distR(p) != null ? `  ·  ${distR(p)} бл. от радара` : "");
     box.append(b, s);
     row.append(img, box);
-    const pick = () => { selected = p.id; lastCam = null; render(); };
+    const pick = () => {
+      if (selected === p.id) { selected = null; userUnselected = true; }
+      else { selected = p.id; userUnselected = false; }
+      lastCam = null; render();
+    };
     row.onclick = pick;
     row.onkeydown = (e) => { if (e.key === "Enter") pick(); };
     list.appendChild(row);
@@ -753,7 +807,11 @@ function render() {
         (o.l ? `${fmt(o.l)}×${fmt(o.w)}×${fmt(o.h)} бл.` : "размер неизвестен") + (distR(o) != null ? `  ·  ${distR(o)} бл. от радара` : "") + (o.info ? `\n${o.info}` : "");
       box.append(b, s);
       row.append(ico, box);
-      const pick = () => { selected = o.id; lastCam = null; render(); };
+      const pick = () => {
+        if (selected === o.id) { selected = null; userUnselected = true; }
+        else { selected = o.id; userUnselected = false; }
+        lastCam = null; render();
+      };
       row.onclick = pick;
       row.onkeydown = (e) => { if (e.key === "Enter") pick(); };
       list.appendChild(row);
@@ -762,10 +820,11 @@ function render() {
 
   const sel = ps.find((p) => p.id === selected) || os.find((o) => o.id === selected);
   $("open").href = sel ? MAP_URL + mapLink(sel) : MAP_URL;
-  const pts = $("pipTargetSelect");
-  if (pts && state.players.length) {
-    if (pts.children.length !== state.players.length) {
-      pts.innerHTML = "";
+  const pts = $el("pipTargetSelect");
+  if (pts) {
+    const targetCount = state.players.length + 1;
+    if (pts.children.length !== targetCount) {
+      pts.innerHTML = '<option value="">Без слежения (свободно)</option>';
       for (const p of state.players) {
         const opt = (pts.ownerDocument || document).createElement("option");
         opt.value = p.id;
@@ -774,9 +833,21 @@ function render() {
         if (p.id === selected) opt.selected = true;
         pts.appendChild(opt);
       }
-    } else if (pts.value !== selected && selected) {
-      pts.value = selected;
+      if (!selected) pts.value = "";
+    } else if (pts.value !== (selected || "")) {
+      pts.value = selected || "";
     }
+    pts.onchange = () => {
+      if (!pts.value) {
+        selected = null;
+        userUnselected = true;
+      } else {
+        selected = pts.value;
+        userUnselected = false;
+      }
+      lastCam = null;
+      render();
+    };
   }
   drawRadar(ps, os);
   updatePin();
@@ -990,7 +1061,7 @@ function pinsFrame() {
   lastFrameT = pn;
   cur = {};
   for (const e of state.players.concat(state.objects || [])) { const q = getPos(e.id); if (q) cur[e.id] = q; }
-  const se = selected && cur[selected];
+  const se = selected && isTrackingEnabled() && cur[selected];
   if (se) moveCamera({ id: selected, x: se.x, y: se.y, z: se.z });
   if (!cam && now - lastFind > 1000) { cam = findCam(); lastFind = now; }
   camOk = !!cam;
@@ -1102,14 +1173,37 @@ function updatePin() {
 }
 setInterval(updatePin, 300);
 
+function getSelectedZoomSetting() {
+  const pz = $el("pipZoomSelect");
+  const cz = $el("camZoomSelect");
+  if (pz && pz.offsetParent) return pz.value;
+  if (cz) return cz.value;
+  return "auto";
+}
+
 function moveCamera(p, force) {
-  const followBox = $("pipFollow") || $("follow");
-  const isFollowOn = followBox ? followBox.checked : true;
-  if (!mapReady || !isFollowOn) return;
+  if (!mapReady || !isTrackingEnabled() || !p || !selected) return;
   const now = Date.now();
   const moved = !lastCam || lastCam.id !== p.id ||
-    Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 1 || Math.abs(lastCam.y - p.y) >= 2;
-  if (!force && (!moved || now - lastCamTime < 120)) return;
+    Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 0.5 || Math.abs(lastCam.y - p.y) >= 1;
+  if (!force && (!moved || now - lastCamTime < 70)) return;
+
+  const cm = getBlueMapControlsManager();
+  const zoomPref = getSelectedZoomSetting();
+
+  if (cm && cm.position && typeof cm.position.set === "function") {
+    cm.position.set(p.x, p.y, p.z);
+    if (zoomPref !== "auto") {
+      const fixedD = parseInt(zoomPref, 10);
+      if (fixedD && fixedD > 0) cm.distance = fixedD;
+    }
+    // When zoomPref is "auto", cm.distance is completely preserved!
+    if (typeof cm.updateCamera === "function") cm.updateCamera();
+    lastCam = { id: p.id, x: p.x, y: p.y, z: p.z };
+    lastCamTime = now;
+    return;
+  }
+
   try {
     const w = $("map").contentWindow;
     if (!w.location.pathname.startsWith("/map")) {
@@ -1273,6 +1367,24 @@ async function togglePiP() {
       const pipExitBtn = pipWin.document.getElementById("pipExit");
       if (pipExitBtn) pipExitBtn.onclick = () => pipWin.close();
 
+      const pipFol = pipWin.document.getElementById("pipFollow");
+      if (pipFol) {
+        pipFol.checked = $("follow") ? $("follow").checked : true;
+        pipFol.onchange = () => {
+          if ($("follow")) $("follow").checked = pipFol.checked;
+          lastCam = null;
+          render();
+        };
+      }
+
+      const pipMScale = pipWin.document.getElementById("pipModelScale");
+      if (pipMScale) {
+        pipMScale.value = localStorage.getItem("radar_model_scale") || "1";
+        pipMScale.onchange = () => {
+          applyModelScale(pipMScale.value);
+        };
+      }
+
       const pipZ = pipWin.document.getElementById("pipZoomSelect");
       if (pipZ) {
         pipZ.value = $("camZoomSelect") ? $("camZoomSelect").value : "auto";
@@ -1287,7 +1399,7 @@ async function togglePiP() {
       const updatePipTargetList = () => {
         const pts = pipWin.document.getElementById("pipTargetSelect");
         if (!pts) return;
-        pts.innerHTML = "";
+        pts.innerHTML = '<option value="">Без слежения (свободно)</option>';
         for (const p of state.players) {
           const opt = pipWin.document.createElement("option");
           opt.value = p.id;
@@ -1296,12 +1408,19 @@ async function togglePiP() {
           if (p.id === selected) opt.selected = true;
           pts.appendChild(opt);
         }
+        if (!selected) pts.value = "";
       };
       updatePipTargetList();
       const pts = pipWin.document.getElementById("pipTargetSelect");
       if (pts) {
         pts.onchange = () => {
-          selected = pts.value;
+          if (!pts.value) {
+            selected = null;
+            userUnselected = true;
+          } else {
+            selected = pts.value;
+            userUnselected = false;
+          }
           lastCam = null;
           render();
         };
@@ -1447,6 +1566,25 @@ function updatePinStyleUI() {
 }
 pinSelect.addEventListener("change", updatePinStyleUI);
 updatePinStyleUI();
+
+// init model scale
+function applyModelScale(s) {
+  localStorage.setItem("radar_model_scale", s);
+  document.documentElement.style.setProperty("--model-scale", s);
+  if (pipWindowRef && pipWindowRef.document) {
+    pipWindowRef.document.documentElement.style.setProperty("--model-scale", s);
+  }
+  const ms = $el("modelScaleSelect");
+  if (ms && ms.value !== s) ms.value = s;
+  const pms = $el("pipModelScale");
+  if (pms && pms.value !== s) pms.value = s;
+}
+const savedModelScale = localStorage.getItem("radar_model_scale") || "1";
+applyModelScale(savedModelScale);
+const modelScaleEl = $("modelScaleSelect");
+if (modelScaleEl) {
+  modelScaleEl.addEventListener("change", () => applyModelScale(modelScaleEl.value));
+}
 
 connect();
 </script>

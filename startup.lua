@@ -338,6 +338,14 @@ local function pushSite()
     ok.close()
     pendingResults = {}
     local j = text and textutils.unserializeJSON(text)
+    if j and type(j.names) == "table" then
+      for uid, nm in pairs(j.names) do
+        if type(nm) == "string" and nm ~= "" then
+          uuidNameCache[uid] = nm
+          uuidNameCache[tostring(uid):lower():gsub("[^%x]", "")] = nm
+        end
+      end
+    end
     return true, nil, type(j) == "table" and j.cmds or nil
   end
   return false, err

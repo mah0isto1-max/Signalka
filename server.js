@@ -4,6 +4,7 @@ const http = require("http");
 const https = require("https");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const KEY = process.env.KEY || "change-me";
 const PORT = process.env.PORT || 3000;
@@ -16,6 +17,15 @@ let lastUpdate = 0;
 let objects = [];     // non-player contacts (aircraft, contraptions...)
 let radar = null;     // {x,y,z,range} sent by the computer
 const clients = new Set();
+
+function offlineUuid(nick) {
+  if (!nick || typeof nick !== "string") return "";
+  const hash = crypto.createHash("md5").update("OfflinePlayer:" + nick).digest();
+  hash[6] = (hash[6] & 0x0f) | 0x30;
+  hash[8] = (hash[8] & 0x3f) | 0x80;
+  const hex = hash.toString("hex");
+  return hex.slice(0,8) + "-" + hex.slice(8,12) + "-" + hex.slice(12,16) + "-" + hex.slice(16,20) + "-" + hex.slice(20);
+}
 
 // ---- UUID -> Nickname resolver & cache ----
 const UUID_CACHE_FILE = path.join(__dirname, "uuid_cache.json");
@@ -30,6 +40,30 @@ function saveUuidCache() {
   try {
     fs.writeFileSync(UUID_CACHE_FILE, JSON.stringify(uuidToNick, null, 2));
   } catch (e) {}
+}
+
+function registerNick(uuidOrNull, nick) {
+  if (!nick || typeof nick !== "string") return;
+  nick = nick.trim();
+  if (!nick) return;
+  let updated = false;
+  if (uuidOrNull && typeof uuidOrNull === "string") {
+    const raw = uuidOrNull.toLowerCase();
+    const clean = raw.replace(/-/g, "");
+    if (uuidToNick[raw] !== nick || uuidToNick[clean] !== nick) {
+      uuidToNick[raw] = nick;
+      uuidToNick[clean] = nick;
+      updated = true;
+    }
+  }
+  const off = offlineUuid(nick);
+  const offClean = off.replace(/-/g, "");
+  if (uuidToNick[off] !== nick || uuidToNick[offClean] !== nick) {
+    uuidToNick[off] = nick;
+    uuidToNick[offClean] = nick;
+    updated = true;
+  }
+  if (updated) saveUuidCache();
 }
 
 const pendingLookups = new Set();
@@ -50,9 +84,7 @@ function resolveUuid(rawId) {
         try {
           const j = JSON.parse(data);
           if (j && j.name) {
-            uuidToNick[rawId] = j.name;
-            uuidToNick[clean] = j.name;
-            saveUuidCache();
+            registerNick(rawId, j.name);
             if (players[rawId] && !players[rawId].name) {
               players[rawId].name = j.name;
               broadcast();
@@ -71,9 +103,7 @@ function resolveUuid(rawId) {
             const pj = JSON.parse(pdata);
             if (pj && pj.success && pj.data && pj.data.player && pj.data.player.username) {
               const nick = pj.data.player.username;
-              uuidToNick[rawId] = nick;
-              uuidToNick[clean] = nick;
-              saveUuidCache();
+              registerNick(rawId, nick);
               if (players[rawId] && !players[rawId].name) {
                 players[rawId].name = nick;
                 broadcast();
@@ -295,7 +325,7 @@ const server = http.createServer((req, res) => {
 
   if (url.pathname === "/login") return handleLogin(req, res);
   // the computer (key in the URL) and the key-protected debug pages stay reachable without the site password
-  const open = (req.method === "POST" && url.pathname === "/api/update") || url.pathname === "/api/debug" || url.pathname === "/api/mapcheck";
+  const open = (req.method === "POST" && url.pathname === "/api/update") || url.pathname === "/api/debug" || url.pathname === "/api/mapcheck" || url.pathname === "/api/resolve";
   if (!open && !authed(req)) {
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       res.writeHead(200, HTML_HDR);
@@ -376,8 +406,15 @@ const server = http.createServer((req, res) => {
         }
       }
       const cmds = cmdQueue.splice(0, 5);
-      res.writeHead(200, { "Content-Type": "application/json" });
-      res.end(JSON.stringify({ ok: true, cmds }));
+      const names = {};
+      for (const p of list) {
+        if (p && p.id) {
+          const n = uuidToNick[p.id] || uuidToNick[p.id.replace(/-/g, "").toLowerCase()];
+          if (n) names[p.id] = n;
+        }
+      }
+      res.writeHead(200, { "Content-Type": "application/json; charset=utf-8" });
+      res.end(JSON.stringify({ ok: true, cmds, names }));
     });
   }
 
@@ -505,22 +542,15 @@ function pollServerPlayers() {
       try {
         const j = JSON.parse(data);
         if (Array.isArray(j.players)) {
-          let updated = false;
           for (const pl of j.players) {
             if (pl.uuid && pl.name) {
-              const clean = pl.uuid.replace(/-/g, "").toLowerCase();
-              if (uuidToNick[pl.uuid] !== pl.name || uuidToNick[clean] !== pl.name) {
-                uuidToNick[pl.uuid] = pl.name;
-                uuidToNick[clean] = pl.name;
-                updated = true;
-              }
+              registerNick(pl.uuid, pl.name);
               if (players[pl.uuid] && !players[pl.uuid].name) {
                 players[pl.uuid].name = pl.name;
                 broadcast();
               }
             }
           }
-          if (updated) saveUuidCache();
         }
       } catch (e) {}
     });
