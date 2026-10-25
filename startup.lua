@@ -148,10 +148,14 @@ end
 
 local uuidNameCache = {}
 
+local pollBusy = false
 local function pollBlueMapPlayers()
+  if pollBusy then return end
+  pollBusy = true
   local ok, r = pcall(http.get, "http://mc.vestalis.xyz:25971/maps/world/live/players.json")
   if ok and r and type(r.readAll) == "function" then
-    local txt = r.readAll()
+    local txt
+    pcall(function() txt = r.readAll() end)
     pcall(function() r.close() end)
     local j = txt and textutils.unserializeJSON(txt)
     if j and type(j.players) == "table" then
@@ -163,6 +167,7 @@ local function pollBlueMapPlayers()
       end
     end
   end
+  pollBusy = false
 end
 
 local function resolvePlayerName(uuid)
