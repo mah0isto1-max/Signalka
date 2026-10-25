@@ -336,8 +336,9 @@ local function pushSite()
   local body = textutils.serializeJSON({ players = list, objects = objs, radar = rd, results = pendingResults })
   local ok, err = http.post(url, body, { ["Content-Type"] = "application/json" })
   if ok then
-    local text = ok.readAll()
-    ok.close()
+    local text = nil
+    pcall(function() text = ok.readAll() end)
+    pcall(function() ok.close() end)
     pendingResults = {}
     local j = text and textutils.unserializeJSON(text)
     if j and type(j.names) == "table" then
@@ -356,7 +357,11 @@ end
 local function siteLoop()
   local lastErr = nil
   while true do
-    local ok, err, cmds = pushSite()
+    local pOk, ok, err, cmds = pcall(pushSite)
+    if not pOk then
+      ok = false
+      err = tostring(ok)
+    end
     if ok == false then
       local errStr = tostring(err or "unknown")
       if errStr:find("403") then
@@ -536,10 +541,9 @@ local function cmdAddId(arg)
     end
   else
     ids[1] = offlineUuid(nick)
-    local r = http.get("https://api.mojang.com/users/profiles/minecraft/" .. textutils.urlEncode(nick))
-    if r then
-      local j = textutils.unserializeJSON(r.readAll())
-      r.close()
+    local txt = safeGet("https://api.mojang.com/users/profiles/minecraft/" .. textutils.urlEncode(nick))
+    if txt then
+      local j = textutils.unserializeJSON(txt)
       local online = j and normUuid(j.id)
       if online and online ~= ids[1] then ids[#ids + 1] = online end
       if online then nick = j.name or nick end
