@@ -326,6 +326,8 @@ local function pushSite()
       }
     end
   end
+  if data.site == "" then return false, "site URL not set (type: site https://...)" end
+  if data.key == "" then return false, "secret key not set (type: key <secret>)" end
   local url = data.site:gsub("/+$", "") .. "/api/update?key=" .. textutils.urlEncode(data.key)
   local rd = nil
   if data.radar then
@@ -352,21 +354,31 @@ local function pushSite()
 end
 
 local function siteLoop()
-  local failed = false
+  local lastErr = nil
   while true do
     local ok, err, cmds = pushSite()
-    if ok == false and not failed then
-      say("Site error: " .. tostring(err))
-      failed = true
-    elseif ok then
-      failed = false
-    end
-    if ok and cmds and #cmds > 0 then
-      for _, c in ipairs(cmds) do
-        pendingResults[#pendingResults + 1] = { id = c.id, out = runRemote(tostring(c.line or "")) }
+    if ok == false then
+      local errStr = tostring(err or "unknown")
+      if errStr:find("403") then
+        errStr = "403 Forbidden - BAD KEY! Check KEY on Render (type: key <secret>)"
       end
-    else
-      sleep(SEND_EVERY)
+      if errStr ~= lastErr then
+        say("Site: " .. errStr)
+        lastErr = errStr
+      end
+      sleep(3)
+    elseif ok then
+      if lastErr then
+        say("Site connected successfully!")
+        lastErr = nil
+      end
+      if cmds and #cmds > 0 then
+        for _, c in ipairs(cmds) do
+          pendingResults[#pendingResults + 1] = { id = c.id, out = runRemote(tostring(c.line or "")) }
+        end
+      else
+        sleep(SEND_EVERY)
+      end
     end
   end
 end
@@ -716,7 +728,22 @@ local function help()
   say("site <url> - set website address")
   say("key <secret> - set website secret key")
   say("test - send test message")
-  say("cooldown <sec> - pause between alerts")
+  say("status - show current settings (site, key, radar, webhook)")
+  say("help - show this help")
+end
+
+local function cmdStatus()
+  say("=== GUARD STATUS ===")
+  say("Site: " .. (data.site ~= "" and data.site or "NOT SET (type: site https://...)"))
+  say("Key: " .. (data.key ~= "" and "SET (hidden)" or "NOT SET (type: key <secret>)"))
+  if data.radar then
+    say(("Radar circle: X=%d Y=%d Z=%d Range=%s"):format(data.radar.x, data.radar.y, data.radar.z, tostring(data.radar.range)))
+  else
+    say("Radar circle: NOT SET (type: radar here OR radar <x> <y> <z>)")
+  end
+  say("Webhook: " .. (data.webhook ~= "" and "SET" or "NOT SET"))
+  local fc = 0 for _ in pairs(data.friends) do fc = fc + 1 end
+  say("Friends: " .. fc)
 end
 
 local function runLine(line)
@@ -731,18 +758,34 @@ local function runLine(line)
   elseif cmd == "inv" then cmdInv(arg)
   elseif cmd == "list" then cmdList()
   elseif cmd == "del" then cmdDel(arg)
+  elseif cmd == "status" then cmdStatus()
   elseif cmd == "webhook" then
-    data.webhook = arg
-    save()
-    say("Webhook saved")
+    if arg and arg ~= "" then
+      data.webhook = arg
+      save()
+      say("Webhook saved")
+    else
+      say("Current webhook: " .. (data.webhook ~= "" and "(is set)" or "(not set)"))
+      say("Usage: webhook <url>")
+    end
   elseif cmd == "site" then
-    data.site = arg
-    save()
-    say("Site saved")
+    if arg and arg ~= "" then
+      data.site = arg
+      save()
+      say("Site saved: " .. data.site)
+    else
+      say("Current site: " .. (data.site ~= "" and data.site or "(not set)"))
+      say("Usage: site <url>")
+    end
   elseif cmd == "key" then
-    data.key = arg
-    save()
-    say("Key saved")
+    if arg and arg ~= "" then
+      data.key = arg
+      save()
+      say("Key saved")
+    else
+      say("Current key: " .. (data.key ~= "" and "(is set)" or "(not set)"))
+      say("Usage: key <secret>")
+    end
   elseif cmd == "test" then
     say(sendDiscord("Guard test message\n" .. mapLink({ x = 0, y = 70, z = 0 })) and "Sent" or "Not sent")
   elseif cmd == "cooldown" then
@@ -766,7 +809,13 @@ function runRemote(line)
 end
 
 local function cmdLoop()
-  say("Guard started. Type help")
+  say("Guard started. Type help or status")
+  if data.site == "" or data.key == "" then
+    say("(!): Site or Key not set! Type 'status'")
+  end
+  if not data.radar then
+    say("(!): Radar pos not set! Type 'radar here' (or radar x y z)")
+  end
   while true do
     write("> ")
     runLine(read())
