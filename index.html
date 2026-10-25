@@ -29,6 +29,38 @@ if (window.top !== window.self) {
     display: grid; grid-template-columns: 340px 1fr; grid-template-rows: auto 1fr;
     transition: background-color .2s, color .2s;
   }
+
+  body.pure-pip {
+    grid-template-columns: 1fr !important;
+    grid-template-rows: 1fr !important;
+    margin: 0 !important; padding: 0 !important; overflow: hidden !important;
+  }
+  body.pure-pip header,
+  body.pure-pip aside,
+  body.pure-pip #radar,
+  body.pure-pip #tools,
+  body.pure-pip #console {
+    display: none !important;
+  }
+  body.pure-pip main {
+    grid-template-rows: 1fr !important;
+    height: 100vh !important; width: 100vw !important;
+  }
+  body.pure-pip #mapwrap {
+    border-bottom: 0 !important;
+    height: 100vh !important; width: 100vw !important;
+  }
+
+  /* PiP info badge */
+  #pipBadge {
+    position: absolute; left: 10px; top: 10px; z-index: 10;
+    background: rgba(16, 22, 19, 0.85); color: #e4ebe5; border: 1px solid rgba(255,255,255,0.2);
+    border-radius: 6px; padding: 4px 10px; font-size: 12px; pointer-events: none;
+    backdrop-filter: blur(4px); box-shadow: 0 2px 8px rgba(0,0,0,0.5); display: none;
+  }
+  body.pure-pip #pipBadge { display: block; }
+  .pip-mode #tools { display: none !important; }
+
   body.mini-mode {
     grid-template-columns: 1fr;
     grid-template-rows: auto 1fr;
@@ -324,7 +356,20 @@ if (window.top !== window.self) {
         <div id="pinlabel"></div>
       </div>
     </div>
+    <div id="pipBadge">🎯 <span id="pipTargetName">Слежение</span></div>
     <div id="tools">
+      <label title="Масштаб (приближение) камеры при слежении за игроком">
+        Масштаб:
+        <select id="camZoomSelect">
+          <option value="auto">Как на карте (колесо мыши)</option>
+          <option value="50">50 бл. (в упор)</option>
+          <option value="100">100 бл. (близко)</option>
+          <option value="150" selected>150 бл. (стандарт)</option>
+          <option value="250">250 бл. (средне)</option>
+          <option value="400">400 бл. (далеко)</option>
+          <option value="700">700 бл. (обзор)</option>
+        </select>
+      </label>
       <label title="Внешний вид маркера игрока на 3D-карте">
         Маркер:
         <select id="pinStyle">
@@ -368,9 +413,10 @@ const CAM_DIST = 150;
 
 const $ = (id) => document.getElementById(id);
 
-// Check if launched in ?mini=1 popup mode
-if (new URLSearchParams(location.search).get("mini") === "1") {
-  document.body.classList.add("mini-mode");
+// Check if launched in pure pip/mini mode
+const urlParams = new URLSearchParams(location.search);
+if (urlParams.get("pip") === "1" || urlParams.get("mini") === "1") {
+  document.body.classList.add("pure-pip");
 }
 
 // ---- UUID -> Nickname client cache & resolver ----
@@ -508,13 +554,41 @@ let state = { players: [], objects: [], online: false };
 let selected = null;
 let lastCam = null, lastCamTime = 0, mapReady = false;
 
+let currentZoomDist = +localStorage.getItem("radar_zoom_dist") || 150;
+let lastKnownRot = 0;
+let lastKnownPitch = 0;
+
+function readCurrentMapCamera() {
+  try {
+    const w = $("map").contentWindow;
+    if (!w) return;
+    const h = (w.location.hash || "").replace(/^#/, "");
+    const parts = h.split(":");
+    if (parts.length >= 5) {
+      const d = parseFloat(parts[4]);
+      if (isFinite(d) && d >= 10 && d <= 5000) {
+        if (!$("camZoomSelect") || $("camZoomSelect").value === "auto") {
+          currentZoomDist = Math.round(d);
+        }
+      }
+      const rot = parseFloat(parts[5]);
+      if (isFinite(rot)) lastKnownRot = rot;
+      const pitch = parseFloat(parts[6]);
+      if (isFinite(pitch)) lastKnownPitch = pitch;
+    }
+  } catch (e) {}
+}
+
 function realMapId() {
   try { return $("map").contentWindow.bluemap.mapViewer.map.data.id || null; } catch (e) { return null; }
 }
 function mapLink(p) {
   const id = realMapId();
   const base = id ? "#" + id : MAP_HASH;
-  return `${base}:${Math.round(p.x)}:${Math.round(p.y)}:${Math.round(p.z)}:${CAM_DIST}:0:0:0:0:perspective`;
+  readCurrentMapCamera();
+  const sel = $("camZoomSelect") ? $("camZoomSelect").value : "auto";
+  const dist = sel === "auto" ? currentZoomDist : (parseInt(sel, 10) || currentZoomDist);
+  return `${base}:${Math.round(p.x)}:${Math.round(p.y)}:${Math.round(p.z)}:${dist}:${lastKnownRot}:${lastKnownPitch}:0:0:perspective`;
 }
 
 function render() {
@@ -608,6 +682,15 @@ function render() {
 
   const sel = ps.find((p) => p.id === selected) || os.find((o) => o.id === selected);
   $("open").href = sel ? MAP_URL + mapLink(sel) : MAP_URL;
+  if ($("pipTargetName")) {
+    if (sel) {
+      const pName = sel.name || nickCache[sel.id] || (sel.friend ? "Друг" : "Игрок");
+      const d = distR(sel);
+      $("pipTargetName").textContent = pName + (d != null ? " (" + d + " бл.)" : "");
+    } else {
+      $("pipTargetName").textContent = state.players.length ? "Слежение" : "Никого нет";
+    }
+  }
   drawRadar(ps, os);
   updatePin();
 }
@@ -1043,6 +1126,7 @@ $("map").addEventListener("load", () => { mapReady = true; cam = null; lastFind 
 
 // ---- Picture-in-Picture (PiP) Window over game ----
 async function togglePiP() {
+  // If native Document Picture-in-Picture is supported
   if ("documentPictureInPicture" in window) {
     if (window.documentPictureInPicture.window) {
       window.documentPictureInPicture.window.close();
@@ -1050,32 +1134,51 @@ async function togglePiP() {
     }
     try {
       const pipWin = await window.documentPictureInPicture.requestWindow({
-        width: 500,
+        width: 520,
         height: 380,
       });
-      // Copy styles
-      document.querySelectorAll('style, link[rel="stylesheet"]').forEach((s) => {
+
+      // Inject clean full-map styles
+      const pipStyle = pipWin.document.createElement("style");
+      pipStyle.textContent = `
+        html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
+        #mapwrap { width: 100vw !important; height: 100vh !important; border: 0 !important; margin: 0 !important; }
+        #tools { display: none !important; }
+        #radar { display: none !important; }
+        #pipBadge {
+          position: absolute; left: 10px; top: 10px; z-index: 10;
+          background: rgba(16, 22, 19, 0.85); color: #e4ebe5; border: 1px solid rgba(255,255,255,0.2);
+          border-radius: 6px; padding: 4px 10px; font-size: 12px; pointer-events: none;
+          backdrop-filter: blur(4px); box-shadow: 0 2px 8px rgba(0,0,0,0.5); display: block;
+        }
+      `;
+      pipWin.document.head.appendChild(pipStyle);
+
+      // Copy font/model styles
+      document.querySelectorAll('style').forEach((s) => {
         pipWin.document.head.appendChild(s.cloneNode(true));
       });
-      pipWin.document.body.className = "mini-mode";
-      pipWin.document.body.style.margin = "0";
-
-      const pipMain = document.createElement("main");
-      pipMain.style.height = "100vh";
-      pipMain.style.display = "grid";
-      pipMain.style.gridTemplateRows = "1fr 140px";
-      pipWin.document.body.appendChild(pipMain);
 
       const mapWrap = $("mapwrap");
-      const radarCanvas = $("radar");
       const mainEl = document.querySelector("main");
+      mapWrap.classList.add("pip-mode");
 
-      pipMain.appendChild(mapWrap);
-      pipMain.appendChild(radarCanvas);
+      // Mount ONLY the map into the PiP window
+      pipWin.document.body.appendChild(mapWrap);
+
+      const notifyResize = () => {
+        try {
+          const w = $("map").contentWindow;
+          if (w) w.dispatchEvent(new Event("resize"));
+        } catch (e) {}
+      };
+      pipWin.addEventListener("resize", notifyResize);
+      setTimeout(notifyResize, 100);
+      setTimeout(notifyResize, 500);
 
       pipWin.addEventListener("pagehide", () => {
-        mainEl.appendChild(mapWrap);
-        mainEl.appendChild(radarCanvas);
+        mapWrap.classList.remove("pip-mode");
+        mainEl.insertBefore(mapWrap, mainEl.firstChild);
         render();
       });
       render();
@@ -1085,13 +1188,13 @@ async function togglePiP() {
     }
   }
 
-  // Fallback: compact popout window
-  const miniWin = window.open(
-    location.origin + location.pathname + "?mini=1",
+  // Fallback: standalone popup showing 100% pure map
+  const pipPop = window.open(
+    location.origin + location.pathname + "?pip=1",
     "SignalkaPiP",
-    "width=520,height=420,menubar=no,toolbar=no,location=no,status=no"
+    "width=520,height=400,menubar=no,toolbar=no,location=no,status=no"
   );
-  if (!miniWin) {
+  if (!pipPop) {
     alert("Разрешите всплывающие окна в браузере, чтобы открыть окно карты поверх игры!");
   }
 }
@@ -1177,6 +1280,21 @@ if (fG !== null) $("fHideGlue").checked = fG === "true";
     render();
   });
 });
+
+// init zoom
+const zoomSelect = $("camZoomSelect");
+const savedZoom = localStorage.getItem("radar_cam_zoom") || "auto";
+if (zoomSelect) {
+  zoomSelect.value = savedZoom;
+  zoomSelect.addEventListener("change", () => {
+    localStorage.setItem("radar_cam_zoom", zoomSelect.value);
+    if (zoomSelect.value !== "auto") {
+      currentZoomDist = parseInt(zoomSelect.value, 10);
+      const sel = state.players.find((p) => p.id === selected);
+      if (sel) moveCamera(sel, true);
+    }
+  });
+}
 
 // init pin style
 const pinSelect = $("pinStyle");
