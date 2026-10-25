@@ -513,8 +513,15 @@ function currentWin() {
   return currentDoc().defaultView || window;
 }
 function $(id) {
-  const d = currentDoc();
-  return d.getElementById(id) || document.getElementById(id);
+  try {
+    const d = currentDoc();
+    return (d && d.getElementById(id)) || (document && document.getElementById(id)) || null;
+  } catch (e) {
+    return null;
+  }
+}
+function $el(id) {
+  return $(id);
 }
 
 // Check if launched in pop or pip mode
@@ -675,12 +682,15 @@ function getBlueMapControlsManager() {
 }
 
 function isTrackingEnabled() {
-  const isPop = document.body.classList.contains("pop-mode") || window.isPipMode;
-  const pb = $el("pipFollow");
-  const fb = $el("follow");
-  if (isPop && pb) return pb.checked;
-  if (fb) return fb.checked;
-  return pb ? pb.checked : false;
+  try {
+    const isPop = (document.body && document.body.classList && document.body.classList.contains("pop-mode")) || window.isPipMode;
+    const pb = $("pipFollow");
+    const fb = $("follow");
+    if (isPop && pb) return !!pb.checked;
+    if (fb) return !!fb.checked;
+    if (pb) return !!pb.checked;
+  } catch (e) {}
+  return false;
 }
 
 function readCurrentMapCamera() {
@@ -819,8 +829,8 @@ function render() {
   }
 
   const sel = ps.find((p) => p.id === selected) || os.find((o) => o.id === selected);
-  $("open").href = sel ? MAP_URL + mapLink(sel) : MAP_URL;
-  const pts = $el("pipTargetSelect");
+  if ($("open")) $("open").href = sel ? MAP_URL + mapLink(sel) : MAP_URL;
+  const pts = $("pipTargetSelect");
   if (pts) {
     const targetCount = state.players.length + 1;
     if (pts.children.length !== targetCount) {
@@ -1174,10 +1184,12 @@ function updatePin() {
 setInterval(updatePin, 300);
 
 function getSelectedZoomSetting() {
-  const pz = $el("pipZoomSelect");
-  const cz = $el("camZoomSelect");
-  if (pz && pz.offsetParent) return pz.value;
-  if (cz) return cz.value;
+  try {
+    const pz = $("pipZoomSelect");
+    const cz = $("camZoomSelect");
+    if (pz && pz.offsetParent) return pz.value;
+    if (cz) return cz.value;
+  } catch (e) {}
   return "auto";
 }
 
@@ -1539,85 +1551,147 @@ $("cline").addEventListener("keydown", (e) => {
 });
 window.addEventListener("resize", () => { if ($("console").classList.contains("on")) $("console").style.top = document.querySelector("header").offsetHeight + "px"; });
 
+// start data connection immediately
+try {
+  connect();
+} catch (e) {
+  console.error("connect error:", e);
+}
+
 // map source
-$("map").src = MAP_URL + MAP_HASH;
+if ($("map")) $("map").src = MAP_URL + MAP_HASH;
 
 // init theme
-const savedBg = getRadarBg();
-applyThemeColor(savedBg);
-if ($("radarBgPicker")) {
-  $("radarBgPicker").addEventListener("input", (e) => applyThemeColor(e.target.value));
-}
-document.querySelectorAll(".c-preset").forEach((btn) => {
-  btn.addEventListener("click", () => applyThemeColor(btn.dataset.col));
-});
+try {
+  const savedBg = getRadarBg();
+  applyThemeColor(savedBg);
+  if ($("radarBgPicker")) {
+    $("radarBgPicker").addEventListener("input", (e) => applyThemeColor(e.target.value));
+  }
+  document.querySelectorAll(".c-preset").forEach((btn) => {
+    btn.addEventListener("click", () => applyThemeColor(btn.dataset.col));
+  });
+} catch (e) {}
 
 // init filters
-const fP = localStorage.getItem("radar_show_players");
-if (fP !== null) $("fPlayers").checked = fP === "true";
-const fO = localStorage.getItem("radar_show_objects");
-if (fO !== null) $("fObjects").checked = fO === "true";
-const fG = localStorage.getItem("radar_hide_glue");
-if (fG !== null) $("fHideGlue").checked = fG === "true";
+try {
+  const fP = localStorage.getItem("radar_show_players");
+  if (fP !== null && $("fPlayers")) $("fPlayers").checked = fP === "true";
+  const fO = localStorage.getItem("radar_show_objects");
+  if (fO !== null && $("fObjects")) $("fObjects").checked = fO === "true";
+  const fG = localStorage.getItem("radar_hide_glue");
+  if (fG !== null && $("fHideGlue")) $("fHideGlue").checked = fG === "true";
 
-["fPlayers", "fObjects", "fHideGlue"].forEach((id) => {
-  $(id).addEventListener("change", () => {
-    localStorage.setItem("radar_show_players", $("fPlayers").checked);
-    localStorage.setItem("radar_show_objects", $("fObjects").checked);
-    localStorage.setItem("radar_hide_glue", $("fHideGlue").checked);
-    render();
-  });
-});
-
-// init zoom
-const zoomSelect = $("camZoomSelect");
-const savedZoom = localStorage.getItem("radar_cam_zoom") || "auto";
-if (zoomSelect) {
-  zoomSelect.value = savedZoom;
-  zoomSelect.addEventListener("change", () => {
-    localStorage.setItem("radar_cam_zoom", zoomSelect.value);
-    if (zoomSelect.value !== "auto") {
-      currentZoomDist = parseInt(zoomSelect.value, 10);
-      const sel = state.players.find((p) => p.id === selected);
-      if (sel) moveCamera(sel, true);
+  ["fPlayers", "fObjects", "fHideGlue"].forEach((id) => {
+    const el = $(id);
+    if (el) {
+      el.addEventListener("change", () => {
+        if ($("fPlayers")) localStorage.setItem("radar_show_players", $("fPlayers").checked);
+        if ($("fObjects")) localStorage.setItem("radar_show_objects", $("fObjects").checked);
+        if ($("fHideGlue")) localStorage.setItem("radar_hide_glue", $("fHideGlue").checked);
+        render();
+      });
     }
   });
-}
+} catch (e) {}
+
+// init follow checkboxes sync
+try {
+  const fb = $("follow");
+  const pb = $("pipFollow");
+  if (fb) {
+    fb.addEventListener("change", () => {
+      if (pb) pb.checked = fb.checked;
+      lastCam = null;
+      render();
+    });
+  }
+  if (pb) {
+    pb.addEventListener("change", () => {
+      if (fb) fb.checked = pb.checked;
+      lastCam = null;
+      render();
+    });
+  }
+} catch (e) {}
+
+// init zoom
+try {
+  const zoomSelect = $("camZoomSelect");
+  const pipZoomSelect = $("pipZoomSelect");
+  const savedZoom = localStorage.getItem("radar_cam_zoom") || "auto";
+  if (zoomSelect) {
+    zoomSelect.value = savedZoom;
+    zoomSelect.addEventListener("change", () => {
+      if (pipZoomSelect) pipZoomSelect.value = zoomSelect.value;
+      localStorage.setItem("radar_cam_zoom", zoomSelect.value);
+      if (zoomSelect.value !== "auto") {
+        currentZoomDist = parseInt(zoomSelect.value, 10);
+        const sel = state.players.find((p) => p.id === selected);
+        if (sel) moveCamera(sel, true);
+      }
+    });
+  }
+  if (pipZoomSelect) {
+    pipZoomSelect.value = savedZoom;
+    pipZoomSelect.addEventListener("change", () => {
+      if (zoomSelect) zoomSelect.value = pipZoomSelect.value;
+      localStorage.setItem("radar_cam_zoom", pipZoomSelect.value);
+      if (pipZoomSelect.value !== "auto") {
+        currentZoomDist = parseInt(pipZoomSelect.value, 10);
+        const sel = state.players.find((p) => p.id === selected);
+        if (sel) moveCamera(sel, true);
+      }
+    });
+  }
+} catch (e) {}
 
 // init pin style
-const pinSelect = $("pinStyle");
-const savedPinStyle = localStorage.getItem("radar_pin_style") || "model3d";
-pinSelect.value = savedPinStyle;
-function updatePinStyleUI() {
-  const v = pinSelect.value;
-  localStorage.setItem("radar_pin_style", v);
-  $("mapwrap").classList.toggle("mode-model3d", v === "model3d");
-  $("mapwrap").classList.toggle("mode-body", v === "body");
-  $("mapwrap").classList.toggle("mode-cube", v === "cube");
-}
-pinSelect.addEventListener("change", updatePinStyleUI);
-updatePinStyleUI();
+try {
+  const pinSelect = $("pinStyle");
+  const savedPinStyle = localStorage.getItem("radar_pin_style") || "model3d";
+  if (pinSelect) {
+    pinSelect.value = savedPinStyle;
+    const updatePinStyleUI = () => {
+      const v = pinSelect.value;
+      localStorage.setItem("radar_pin_style", v);
+      if ($("mapwrap")) {
+        $("mapwrap").classList.toggle("mode-model3d", v === "model3d");
+        $("mapwrap").classList.toggle("mode-body", v === "body");
+        $("mapwrap").classList.toggle("mode-cube", v === "cube");
+      }
+    };
+    pinSelect.addEventListener("change", updatePinStyleUI);
+    updatePinStyleUI();
+  }
+} catch (e) {}
 
 // init model scale
 function applyModelScale(s) {
-  localStorage.setItem("radar_model_scale", s);
-  document.documentElement.style.setProperty("--model-scale", s);
-  if (pipWindowRef && pipWindowRef.document) {
-    pipWindowRef.document.documentElement.style.setProperty("--model-scale", s);
+  try {
+    localStorage.setItem("radar_model_scale", s);
+    document.documentElement.style.setProperty("--model-scale", s);
+    if (pipWindowRef && pipWindowRef.document && pipWindowRef.document.documentElement) {
+      pipWindowRef.document.documentElement.style.setProperty("--model-scale", s);
+    }
+    const ms = $("modelScaleSelect");
+    if (ms && ms.value !== s) ms.value = s;
+    const pms = $("pipModelScale");
+    if (pms && pms.value !== s) pms.value = s;
+  } catch (e) {}
+}
+try {
+  const savedModelScale = localStorage.getItem("radar_model_scale") || "1";
+  applyModelScale(savedModelScale);
+  const modelScaleEl = $("modelScaleSelect");
+  if (modelScaleEl) {
+    modelScaleEl.addEventListener("change", () => applyModelScale(modelScaleEl.value));
   }
-  const ms = $el("modelScaleSelect");
-  if (ms && ms.value !== s) ms.value = s;
-  const pms = $el("pipModelScale");
-  if (pms && pms.value !== s) pms.value = s;
-}
-const savedModelScale = localStorage.getItem("radar_model_scale") || "1";
-applyModelScale(savedModelScale);
-const modelScaleEl = $("modelScaleSelect");
-if (modelScaleEl) {
-  modelScaleEl.addEventListener("change", () => applyModelScale(modelScaleEl.value));
-}
-
-connect();
+  const pipModelScaleEl = $("pipModelScale");
+  if (pipModelScaleEl) {
+    pipModelScaleEl.addEventListener("change", () => applyModelScale(pipModelScaleEl.value));
+  }
+} catch (e) {}
 </script>
 </body>
 </html>
