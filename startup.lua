@@ -304,7 +304,7 @@ local function pushSite()
              or (type(t.displayName) == "string" and t.displayName ~= "" and t.displayName)
              or (type(t.player) == "string" and t.player ~= "" and t.player)
              or uuidNameCache[t.id]
-             or resolvePlayerName(t.id)
+             or uuidNameCache[tostring(t.id):lower():gsub("[^%x]", "")]
              or ""
       end
       list[#list + 1] = {

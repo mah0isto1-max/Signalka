@@ -8,7 +8,7 @@ const crypto = require("crypto");
 
 const KEY = process.env.KEY || "change-me";
 const PORT = process.env.PORT || 3000;
-const STALE_MS = 10000;
+const STALE_MS = 30000;
 const TRAIL = 120;
 
 function checkKey(k) {
@@ -328,8 +328,13 @@ const server = http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");
 
   if (url.pathname === "/login") return handleLogin(req, res);
-  // the computer (key in the URL) and the key-protected debug pages stay reachable without the site password
-  const open = (req.method === "POST" && url.pathname === "/api/update") || url.pathname === "/api/debug" || url.pathname === "/api/mapcheck" || url.pathname === "/api/resolve";
+  // the computer (key in the URL) and open API endpoints stay reachable without the site password
+  const open = (req.method === "POST" && url.pathname === "/api/update")
+            || url.pathname === "/api/debug"
+            || url.pathname === "/api/mapcheck"
+            || url.pathname === "/api/resolve"
+            || url.pathname === "/api/state"
+            || url.pathname === "/api/stream";
   if (!open && !authed(req)) {
     if (req.method === "GET" && (url.pathname === "/" || url.pathname === "/index.html")) {
       res.writeHead(200, HTML_HDR);
@@ -362,8 +367,9 @@ const server = http.createServer((req, res) => {
         objects = cleanObjects(parsed.objects);
         results = parsed.results;
         const r = parsed.radar;
-        radar = r && isFinite(+r.x) && isFinite(+r.z) && +r.range > 0
-          ? { x: +r.x, y: +r.y || 0, z: +r.z, range: +r.range } : null;
+        if (r && isFinite(+r.x) && isFinite(+r.z) && +r.range > 0) {
+          radar = { x: +r.x, y: +r.y || 0, z: +r.z, range: +r.range };
+        }
       } catch (e) {
         res.writeHead(400);
         return res.end("bad json");
