@@ -239,43 +239,48 @@ local function sendDiscordAlert(nick, uuid, pos, mapUrl, siteUrl)
     return false
   end
   local d = distFromRadar(pos)
-  local distTxt = d and (tostring(d) .. " blocks from radar") or "unknown"
+  local distTxt = d and (tostring(d) .. " blocks") or "unknown"
   local hasNick = nick and nick ~= "" and nick ~= uuid
-  local displayNick = hasNick and nick or "Unknown"
-  local title = hasNick and ("\xF0\x9F\x9A\xA8 INTRUDER DETECTED: " .. nick) or "\xF0\x9F\x9A\xA8 UNKNOWN PLAYER DETECTED"
+
+  -- try to get nick from uuidNameCache one more time (may have been resolved since alert queued)
+  if not hasNick then
+    local cached = uuidNameCache[uuid]
+                or uuidNameCache[tostring(uuid):lower():gsub("[^%x]","")]
+    if cached and cached ~= "" then nick = cached; hasNick = true end
+  end
+
+  local displayNick = hasNick and nick or ("UUID:" .. uuid:sub(1,8))
+  local title = hasNick and ("[!] INTRUDER: " .. nick) or "[!] UNKNOWN PLAYER"
   local avatar = hasNick and ("https://minotar.net/helm/" .. textutils.urlEncode(nick) .. "/64.png") or nil
 
   local fields = {
     { name = "Nick", value = "**" .. displayNick .. "**", inline = true },
     { name = "Distance", value = distTxt, inline = true },
-    { name = "Coordinates", value = ("X: `%d` | Y: `%d` | Z: `%d`"):format(math.floor(pos.x), math.floor(pos.y), math.floor(pos.z)), inline = false },
+    { name = "Coords", value = ("X:`%d` Y:`%d` Z:`%d`"):format(math.floor(pos.x), math.floor(pos.y), math.floor(pos.z)), inline = false },
     { name = "UUID", value = "`" .. uuid .. "`", inline = false }
   }
   if mapUrl and mapUrl ~= "" then
-    fields[#fields + 1] = { name = "3D Map", value = "[Open map](" .. mapUrl .. ")", inline = true }
+    fields[#fields + 1] = { name = "3D Map", value = "[Open](" .. mapUrl .. ")", inline = true }
   end
   if siteUrl and siteUrl ~= "" then
-    fields[#fields + 1] = { name = "Radar site", value = "[Open site](" .. siteUrl .. ")", inline = true }
+    fields[#fields + 1] = { name = "Radar", value = "[Open](" .. siteUrl .. ")", inline = true }
   end
 
-  local embed = {
-    title = title,
-    color = 16730965,
-    fields = fields
-  }
+  local embed = { title = title, color = 16730965, fields = fields }
   if avatar then embed.thumbnail = { url = avatar } end
 
   local payload = {
-    content = "@here \xF0\x9F\x9A\xA8 **INTRUDER detected in radar zone!**",
+    content = "@here **[!] INTRUDER in radar zone!**",
     embeds = { embed }
   }
   local body = textutils.serializeJSON(payload)
-  local ok, err = http.post(data.webhook, body, { ["Content-Type"] = "application/json; charset=utf-8" })
+  local ok, err = http.post(data.webhook, body, { ["Content-Type"] = "application/json" })
   if ok then ok.close() return true end
 
-  -- Fallback to plain text
-  local plain = ("@here \xF0\x9F\x9A\xA8 **%s**\nNick: **%s** | Distance: %s\nCoords: X:%d Y:%d Z:%d\nUUID: %s\nMap: <%s>"):format(
-    title, displayNick, distTxt, math.floor(pos.x), math.floor(pos.y), math.floor(pos.z), uuid, mapUrl or "")
+  -- Fallback plain text
+  local plain = ("@here [!] %s\nNick: %s | Dist: %s\nX:%d Y:%d Z:%d\nUUID: %s"):format(
+    title, displayNick, distTxt, math.floor(pos.x), math.floor(pos.y), math.floor(pos.z), uuid)
+  if mapUrl and mapUrl ~= "" then plain = plain .. "\nMap: <" .. mapUrl .. ">" end
   if siteUrl and siteUrl ~= "" then plain = plain .. "\nSite: <" .. siteUrl .. ">" end
   return sendDiscord(plain)
 end
@@ -366,12 +371,20 @@ local function guardLoop()
       if not data.friends[t.id] then
         if not lastAlert[t.id] or now() - lastAlert[t.id] > data.cooldown then
           lastAlert[t.id] = now()
-          local pName = data.friends[t.id]
+          -- try all sources for the nick before sending alert
+          local pName = (type(t.name) == "string" and t.name ~= "" and t.name)
+                     or (type(t.username) == "string" and t.username ~= "" and t.username)
+                     or (type(t.displayName) == "string" and t.displayName ~= "" and t.displayName)
+                     or uuidNameCache[t.id]
+                     or uuidNameCache[tostring(t.id):lower():gsub("[^%x]","")]
+          -- force a fresh BlueMap poll to catch offline/cracked players
           if not pName or pName == "" then
-            pName = (type(t.name) == "string" and t.name ~= "" and t.name)
-                 or (type(t.username) == "string" and t.username ~= "" and t.username)
-                 or resolvePlayerName(t.id)
+            pollBusy = false  -- reset busy flag so poll runs
+            pollBlueMapPlayers()
+            pName = uuidNameCache[t.id]
+                 or uuidNameCache[tostring(t.id):lower():gsub("[^%x]","")]
           end
+          if not pName or pName == "" then pName = resolvePlayerName(t.id) end
           sendDiscordAlert(pName, t.id, t.position, mapLink(t.position), data.site ~= "" and data.site or nil)
         end
       end
