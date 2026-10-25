@@ -30,6 +30,54 @@ if (window.top !== window.self) {
     transition: background-color .2s, color .2s;
   }
 
+
+  /* Pop mode: clean site window with collapsible sidebar */
+  body.pop-mode {
+    grid-template-columns: 280px 1fr !important;
+    grid-template-rows: auto 1fr !important;
+  }
+  body.pop-mode.sidebar-hidden {
+    grid-template-columns: 1fr !important;
+  }
+  body.pop-mode.sidebar-hidden aside {
+    display: none !important;
+  }
+  body.pop-mode header {
+    padding: 6px 12px !important;
+  }
+  body.pop-mode #tabs,
+  body.pop-mode #radarThemeWrap {
+    display: none !important;
+  }
+  body.pop-mode main {
+    grid-template-rows: 1fr 140px !important;
+  }
+  body.pop-mode.no-radar main {
+    grid-template-rows: 1fr !important;
+  }
+  body.pop-mode.no-radar #radar {
+    display: none !important;
+  }
+  body.pop-mode #mapwrap {
+    height: 100% !important;
+  }
+
+  /* PiP Floating Overlay Bar */
+  #pipToolbar {
+    position: absolute; left: 8px; top: 8px; z-index: 10;
+    display: none; align-items: center; gap: 6px;
+    background: rgba(14, 20, 17, 0.9); border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 8px; padding: 4px 8px; font-size: 12px; color: #e4ebe5;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.6); backdrop-filter: blur(6px);
+  }
+  #pipToolbar select, #pipToolbar button {
+    background: #1b2420; border: 1px solid #2f3b34; color: #fff;
+    padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer;
+  }
+  .pip-active #pipToolbar {
+    display: flex !important;
+  }
+
   body.pure-pip {
     grid-template-columns: 1fr !important;
     grid-template-rows: 1fr !important;
@@ -298,7 +346,8 @@ if (window.top !== window.self) {
 <header>
   <h1>Радар базы</h1>
   <nav id="tabs"><button class="tab on" data-t="radar">Радар</button><button class="tab" data-t="console">Консоль</button></nav>
-  <button type="button" class="tab" id="headerPip" title="Открыть в плавающем окне поверх игры">📺 Окно поверх игры (PiP)</button>
+  <button type="button" class="tab" id="headerPip" title="Открыть плавающее окно поверх всех окон (Chrome PiP)">📺 Поверх игры (PiP)</button>
+  <button type="button" class="tab" id="headerPop" title="Открыть сайт в отдельном компактном окне">🪟 Окно сайта</button>
   <div id="radarThemeWrap">
     <span>Цвет темы:</span>
     <div class="color-presets">
@@ -356,7 +405,20 @@ if (window.top !== window.self) {
         <div id="pinlabel"></div>
       </div>
     </div>
-    <div id="pipBadge">🎯 <span id="pipTargetName">Слежение</span></div>
+    <div id="pipToolbar">
+      <span>🎯</span>
+      <select id="pipTargetSelect" title="Выбор игрока для слежения"></select>
+      <select id="pipZoomSelect" title="Масштаб (зум) камеры">
+        <option value="auto">Авто-зум</option>
+        <option value="60">60 бл.</option>
+        <option value="120">120 бл.</option>
+        <option value="200" selected>200 бл.</option>
+        <option value="350">350 бл.</option>
+        <option value="600">600 бл.</option>
+      </select>
+      <label style="cursor:pointer;display:flex;align-items:center;gap:3px" title="Следить за игроком"><input type="checkbox" id="pipFollow" checked> Следить</label>
+      <button type="button" id="pipExit" title="Вернуть на страницу">✕</button>
+    </div>
     <div id="tools">
       <label title="Масштаб (приближение) камеры при слежении за игроком">
         Масштаб:
@@ -378,7 +440,8 @@ if (window.top !== window.self) {
           <option value="cube">Вращающийся кубик</option>
         </select>
       </label>
-      <button type="button" id="btnPipTool" title="Открыть в плавающем окне поверх игры">📺 Поверх игры (PiP)</button>
+      <button type="button" id="btnPipTool" title="Открыть плавающее окно поверх всех окон (Chrome PiP)">📺 PiP</button>
+      <button type="button" id="btnPopTool" title="Открыть сайт в отдельном компактном окне">🪟 Окно сайта</button>
       <label><input type="checkbox" id="follow" checked> Следить камерой</label>
       <a id="open" href="#" target="_blank" rel="noopener">Открыть карту</a>
     </div>
@@ -411,11 +474,28 @@ const BANDIT = "data:image/svg+xml," + encodeURIComponent(
   '<rect x="3" y="5" width="2" height="1" fill="#a36f50"/><rect x="2" y="6" width="4" height="1" fill="#6d3b2c"/></svg>');
 const CAM_DIST = 150;
 
-const $ = (id) => document.getElementById(id);
+let pipWindowRef = null;
+function currentDoc() {
+  if (pipWindowRef && !pipWindowRef.closed && pipWindowRef.document) {
+    const mw = pipWindowRef.document.getElementById("mapwrap");
+    if (mw) return pipWindowRef.document;
+  }
+  const mw = document.getElementById("mapwrap");
+  return (mw && mw.ownerDocument) || document;
+}
+function currentWin() {
+  return currentDoc().defaultView || window;
+}
+function $(id) {
+  const d = currentDoc();
+  return d.getElementById(id) || document.getElementById(id);
+}
 
-// Check if launched in pure pip/mini mode
+// Check if launched in pop or pip mode
 const urlParams = new URLSearchParams(location.search);
-if (urlParams.get("pip") === "1" || urlParams.get("mini") === "1") {
+if (urlParams.get("pop") === "1" || urlParams.get("mini") === "1") {
+  document.body.classList.add("pop-mode");
+} else if (urlParams.get("pip") === "1") {
   document.body.classList.add("pure-pip");
 }
 
@@ -682,13 +762,20 @@ function render() {
 
   const sel = ps.find((p) => p.id === selected) || os.find((o) => o.id === selected);
   $("open").href = sel ? MAP_URL + mapLink(sel) : MAP_URL;
-  if ($("pipTargetName")) {
-    if (sel) {
-      const pName = sel.name || nickCache[sel.id] || (sel.friend ? "Друг" : "Игрок");
-      const d = distR(sel);
-      $("pipTargetName").textContent = pName + (d != null ? " (" + d + " бл.)" : "");
-    } else {
-      $("pipTargetName").textContent = state.players.length ? "Слежение" : "Никого нет";
+  const pts = $("pipTargetSelect");
+  if (pts && state.players.length) {
+    if (pts.children.length !== state.players.length) {
+      pts.innerHTML = "";
+      for (const p of state.players) {
+        const opt = (pts.ownerDocument || document).createElement("option");
+        opt.value = p.id;
+        const pName = p.name || nickCache[p.id] || (p.friend ? "Друг" : "Игрок");
+        opt.textContent = (p.friend ? "★ " : "⚠ ") + pName;
+        if (p.id === selected) opt.selected = true;
+        pts.appendChild(opt);
+      }
+    } else if (pts.value !== selected && selected) {
+      pts.value = selected;
     }
   }
   drawRadar(ps, os);
@@ -748,7 +835,8 @@ function findCam() {
 }
 
 function makePin() {
-  const el = document.createElement("div");
+  const doc = currentDoc();
+  const el = doc.createElement("div");
   el.className = "pp";
   el.innerHTML = `
     <div class="pin-model3d-view">
@@ -891,8 +979,13 @@ function drawObjects(g, pr) {
 }
 
 function pinsFrame() {
-  requestAnimationFrame(pinsFrame);
+  currentWin().requestAnimationFrame(pinsFrame);
   if (!mapReady) return;
+  const mapWrapEl = $("mapwrap");
+  if (!mapWrapEl) return;
+  const W = mapWrapEl.clientWidth, H = mapWrapEl.clientHeight;
+  if (!W || !H) return;
+
   const now = Date.now(), pn = performance.now();
   lastFrameT = pn;
   cur = {};
@@ -903,7 +996,6 @@ function pinsFrame() {
   camOk = !!cam;
   if (!cam) { for (const id in pins) pins[id].style.display = "none"; drawRing(null); return; }
   const V = cam.matrixWorldInverse.elements, P = cam.projectionMatrix.elements;
-  const W = $("mapwrap").clientWidth, H = $("mapwrap").clientHeight;
   drawRing(V, P, W, H);
 
   const showPlayers = $("fPlayers").checked;
@@ -1011,7 +1103,9 @@ function updatePin() {
 setInterval(updatePin, 300);
 
 function moveCamera(p, force) {
-  if (!mapReady || !$("follow").checked) return;
+  const followBox = $("pipFollow") || $("follow");
+  const isFollowOn = followBox ? followBox.checked : true;
+  if (!mapReady || !isFollowOn) return;
   const now = Date.now();
   const moved = !lastCam || lastCam.id !== p.id ||
     Math.abs(lastCam.x - p.x) + Math.abs(lastCam.z - p.z) >= 1 || Math.abs(lastCam.y - p.y) >= 2;
@@ -1124,9 +1218,22 @@ window.addEventListener("resize", () => {
 $("follow").addEventListener("change", () => { lastCam = null; render(); });
 $("map").addEventListener("load", () => { mapReady = true; cam = null; lastFind = 0; lastCam = null; render(); });
 
+// ---- Open exact site window as a popup ----
+function openPopWindow() {
+  const w = window.open(
+    location.origin + location.pathname + "?pop=1",
+    "SignalkaPopWindow",
+    "width=780,height=600,menubar=no,toolbar=no,location=no,status=no"
+  );
+  if (!w) {
+    alert("Разрешите всплывающие окна в браузере!");
+  }
+}
+if ($("btnPopTool")) $("btnPopTool").addEventListener("click", openPopWindow);
+if ($("headerPop")) $("headerPop").addEventListener("click", openPopWindow);
+
 // ---- Picture-in-Picture (PiP) Window over game ----
 async function togglePiP() {
-  // If native Document Picture-in-Picture is supported
   if ("documentPictureInPicture" in window) {
     if (window.documentPictureInPicture.window) {
       window.documentPictureInPicture.window.close();
@@ -1134,73 +1241,104 @@ async function togglePiP() {
     }
     try {
       const pipWin = await window.documentPictureInPicture.requestWindow({
-        width: 520,
+        width: 540,
         height: 380,
       });
+      pipWindowRef = pipWin;
 
-      // Inject clean full-map styles
+      // Clean full-map styles in PiP
       const pipStyle = pipWin.document.createElement("style");
       pipStyle.textContent = `
         html, body { height: 100%; margin: 0; padding: 0; overflow: hidden; background: #000; font-family: system-ui, sans-serif; }
         #mapwrap { width: 100vw !important; height: 100vh !important; border: 0 !important; margin: 0 !important; }
         #tools { display: none !important; }
         #radar { display: none !important; }
-        #pipBadge {
-          position: absolute; left: 10px; top: 10px; z-index: 10;
-          background: rgba(16, 22, 19, 0.85); color: #e4ebe5; border: 1px solid rgba(255,255,255,0.2);
-          border-radius: 6px; padding: 4px 10px; font-size: 12px; pointer-events: none;
-          backdrop-filter: blur(4px); box-shadow: 0 2px 8px rgba(0,0,0,0.5); display: block;
-        }
+        #pipToolbar { display: flex !important; }
       `;
       pipWin.document.head.appendChild(pipStyle);
 
-      // Copy font/model styles
-      document.querySelectorAll('style').forEach((s) => {
+      // Copy all existing stylesheets & themes into the PiP window
+      document.querySelectorAll('style, link[rel="stylesheet"]').forEach((s) => {
         pipWin.document.head.appendChild(s.cloneNode(true));
       });
 
-      const mapWrap = $("mapwrap");
+      const mapWrap = document.getElementById("mapwrap");
       const mainEl = document.querySelector("main");
-      mapWrap.classList.add("pip-mode");
+      mapWrap.classList.add("pip-active");
 
-      // Mount ONLY the map into the PiP window
+      // Mount ONLY mapwrap into PiP
       pipWin.document.body.appendChild(mapWrap);
+
+      // Wire PiP toolbar controls
+      const pipExitBtn = pipWin.document.getElementById("pipExit");
+      if (pipExitBtn) pipExitBtn.onclick = () => pipWin.close();
+
+      const pipZ = pipWin.document.getElementById("pipZoomSelect");
+      if (pipZ) {
+        pipZ.value = $("camZoomSelect") ? $("camZoomSelect").value : "auto";
+        pipZ.onchange = () => {
+          if ($("camZoomSelect")) $("camZoomSelect").value = pipZ.value;
+          if (pipZ.value !== "auto") currentZoomDist = parseInt(pipZ.value, 10);
+          const sel = state.players.find((p) => p.id === selected);
+          if (sel) moveCamera(sel, true);
+        };
+      }
+
+      const updatePipTargetList = () => {
+        const pts = pipWin.document.getElementById("pipTargetSelect");
+        if (!pts) return;
+        pts.innerHTML = "";
+        for (const p of state.players) {
+          const opt = pipWin.document.createElement("option");
+          opt.value = p.id;
+          const pName = p.name || nickCache[p.id] || (p.friend ? "Друг" : "Игрок");
+          opt.textContent = (p.friend ? "★ " : "⚠ ") + pName;
+          if (p.id === selected) opt.selected = true;
+          pts.appendChild(opt);
+        }
+      };
+      updatePipTargetList();
+      const pts = pipWin.document.getElementById("pipTargetSelect");
+      if (pts) {
+        pts.onchange = () => {
+          selected = pts.value;
+          lastCam = null;
+          render();
+        };
+      }
 
       const notifyResize = () => {
         try {
+          cam = null; lastFind = 0;
           const w = $("map").contentWindow;
           if (w) w.dispatchEvent(new Event("resize"));
         } catch (e) {}
       };
       pipWin.addEventListener("resize", notifyResize);
-      setTimeout(notifyResize, 100);
-      setTimeout(notifyResize, 500);
+      setTimeout(notifyResize, 150);
 
       pipWin.addEventListener("pagehide", () => {
-        mapWrap.classList.remove("pip-mode");
+        pipWindowRef = null;
+        mapWrap.classList.remove("pip-active");
         mainEl.insertBefore(mapWrap, mainEl.firstChild);
+        cam = null; lastFind = 0;
         render();
       });
+
+      cam = null; lastFind = 0;
       render();
       return;
     } catch (e) {
-      console.warn("Doc PiP error:", e);
+      console.warn("Doc PiP error, falling back to window:", e);
     }
   }
 
-  // Fallback: standalone popup showing 100% pure map
-  const pipPop = window.open(
-    location.origin + location.pathname + "?pip=1",
-    "SignalkaPiP",
-    "width=520,height=400,menubar=no,toolbar=no,location=no,status=no"
-  );
-  if (!pipPop) {
-    alert("Разрешите всплывающие окна в браузере, чтобы открыть окно карты поверх игры!");
-  }
+  // Fallback to standalone popup
+  openPopWindow();
 }
 
-$("btnPipTool").addEventListener("click", togglePiP);
-$("headerPip").addEventListener("click", togglePiP);
+if ($("btnPipTool")) $("btnPipTool").addEventListener("click", togglePiP);
+if ($("headerPip")) $("headerPip").addEventListener("click", togglePiP);
 
 // ---- remote console ----
 let cSince = 0, cTimer = null;
