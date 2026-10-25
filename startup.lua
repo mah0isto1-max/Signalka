@@ -146,6 +146,62 @@ local function infoOf(t)
   return table.concat(parts, " "):sub(1, 200)
 end
 
+local uuidNameCache = {}
+local function resolvePlayerName(uuid)
+  if not uuid or uuid == "" then return "" end
+  if data.friends[uuid] then return data.friends[uuid] end
+  if uuidNameCache[uuid] then return uuidNameCache[uuid] end
+  local clean = tostring(uuid):lower():gsub("[^%x]", "")
+  if #clean ~= 32 then return "" end
+
+  -- 1. Try our own guard site (which already resolves and caches names)
+  if data.site and data.site ~= "" then
+    local sUrl = data.site:gsub("/+$", "") .. "/api/resolve?uuid=" .. textutils.urlEncode(uuid)
+    local ok, res = pcall(http.get, sUrl)
+    if ok and res then
+      local txt = res.readAll()
+      res.close()
+      local j = txt and textutils.unserializeJSON(txt)
+      if j and j.name then
+        uuidNameCache[uuid] = j.name
+        return j.name
+      end
+    end
+  end
+
+  -- 2. Try PlayerDB
+  local ok2, res2 = pcall(http.get, "https://playerdb.co/api/player/minecraft/" .. clean)
+  if ok2 and res2 then
+    local txt = res2.readAll()
+    res2.close()
+    local j = txt and textutils.unserializeJSON(txt)
+    if j and j.success and j.data and j.data.player and j.data.player.username then
+      local n = j.data.player.username
+      uuidNameCache[uuid] = n
+      return n
+    end
+  end
+
+  -- 3. Try Mojang sessionserver
+  local ok3, res3 = pcall(http.get, "https://sessionserver.mojang.com/session/minecraft/profile/" .. clean)
+  if ok3 and res3 then
+    local txt = res3.readAll()
+    res3.close()
+    local j = txt and textutils.unserializeJSON(txt)
+    if j and j.name then
+      uuidNameCache[uuid] = j.name
+      return j.name
+    end
+  end
+
+  return ""
+end
+
+local function distFromRadar(pos)
+  if not data.radar or not pos then return nil end
+  return math.floor(math.sqrt((pos.x - data.radar.x)^2 + (pos.y - data.radar.y)^2 + (pos.z - data.radar.z)^2) + 0.5)
+end
+
 local function sendDiscord(text)
   if data.webhook == "" then
     say("Webhook not set")
@@ -156,6 +212,53 @@ local function sendDiscord(text)
   if ok then ok.close() return true end
   say("Webhook error: " .. tostring(err))
   return false
+end
+
+local function sendDiscordAlert(nick, uuid, pos, mapUrl, siteUrl)
+  if data.webhook == "" then
+    say("Webhook not set")
+    return false
+  end
+  local d = distFromRadar(pos)
+  local distTxt = d and (tostring(d) .. " бл. от радара") or "неизвестно"
+  local hasNick = nick and nick ~= "" and nick ~= uuid
+  local displayNick = hasNick and nick or "Не определен"
+  local title = hasNick and ("🚨 ОБНАРУЖЕН ЧУЖОЙ ИГРОК: " .. nick) or "🚨 ОБНАРУЖЕН НЕИЗВЕСТНЫЙ ИГРОК"
+  local avatar = hasNick and ("https://minotar.net/helm/" .. textutils.urlEncode(nick) .. "/64.png") or nil
+
+  local fields = {
+    { name = "Никнейм", value = "**" .. displayNick .. "**", inline = true },
+    { name = "Дистанция", value = distTxt, inline = true },
+    { name = "Координаты", value = ("X: `%d` | Y: `%d` | Z: `%d`"):format(math.floor(pos.x), math.floor(pos.y), math.floor(pos.z)), inline = false },
+    { name = "UUID", value = "`" .. uuid .. "`", inline = false }
+  }
+  if mapUrl and mapUrl ~= "" then
+    fields[#fields + 1] = { name = "3D-Карта", value = "[Открыть на карте](" .. mapUrl .. ")", inline = true }
+  end
+  if siteUrl and siteUrl ~= "" then
+    fields[#fields + 1] = { name = "Сайт радара", value = "[Открыть сайт](" .. siteUrl .. ")", inline = true }
+  end
+
+  local embed = {
+    title = title,
+    color = 16730965,
+    fields = fields
+  }
+  if avatar then embed.thumbnail = { url = avatar } end
+
+  local payload = {
+    content = "@here 🚨 **Обнаружен чужой игрок в зоне действия радара!**",
+    embeds = { embed }
+  }
+  local body = textutils.serializeJSON(payload)
+  local ok, err = http.post(data.webhook, body, { ["Content-Type"] = "application/json" })
+  if ok then ok.close() return true end
+
+  -- Fallback to plain text
+  local plain = ("@here 🚨 **%s**\nНик: **%s** | Дистанция: %s\nКоординаты: X:%d Y:%d Z:%d\nUUID: %s\nКарта: <%s>"):format(
+    title, displayNick, distTxt, math.floor(pos.x), math.floor(pos.y), math.floor(pos.z), uuid, mapUrl or "")
+  if siteUrl and siteUrl ~= "" then plain = plain .. "\nСайт: <" .. siteUrl .. ">" end
+  return sendDiscord(plain)
 end
 
 local function mapLink(p)
@@ -176,6 +279,8 @@ local function pushSite()
              or (type(t.username) == "string" and t.username ~= "" and t.username)
              or (type(t.displayName) == "string" and t.displayName ~= "" and t.displayName)
              or (type(t.player) == "string" and t.player ~= "" and t.player)
+             or uuidNameCache[t.id]
+             or resolvePlayerName(t.id)
              or ""
       end
       list[#list + 1] = {
@@ -242,14 +347,13 @@ local function guardLoop()
       if not data.friends[t.id] then
         if not lastAlert[t.id] or now() - lastAlert[t.id] > data.cooldown then
           lastAlert[t.id] = now()
-          local pName = (type(t.name) == "string" and t.name ~= "" and t.name)
-                     or (type(t.username) == "string" and t.username ~= "" and t.username)
-                     or ""
-          local who = pName ~= "" and (pName .. " (" .. t.id:sub(1, 8) .. ")") or t.id
-          local msg = ("ALERT! Unknown player: %s\nPos: x=%d y=%d z=%d\n%s"):format(
-            who, t.position.x, t.position.y, t.position.z, mapLink(t.position))
-          if data.site ~= "" then msg = msg .. "\nLive: " .. data.site end
-          sendDiscord(msg)
+          local pName = data.friends[t.id]
+          if not pName or pName == "" then
+            pName = (type(t.name) == "string" and t.name ~= "" and t.name)
+                 or (type(t.username) == "string" and t.username ~= "" and t.username)
+                 or resolvePlayerName(t.id)
+          end
+          sendDiscordAlert(pName, t.id, t.position, mapLink(t.position), data.site ~= "" and data.site or nil)
         end
       end
     end

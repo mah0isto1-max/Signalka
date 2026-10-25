@@ -17,16 +17,9 @@ if (window.top !== window.self) {
 </script>
 <style>
   :root {
-    --bg: #eef1ea; --panel: #fbfcf8; --ink: #1d2a24; --muted: #5d6b63;
-    --line: #cfd6c8; --alert: #c4321f; --ok: #2f7d4f; --accent: #1f5f8b;
-    color-scheme: light;
-  }
-  @media (prefers-color-scheme: dark) {
-    :root {
-      --bg: #141a17; --panel: #1b2420; --ink: #e4ebe5; --muted: #93a398;
-      --line: #2f3b34; --alert: #ff6b55; --ok: #5fc58a; --accent: #6db7e8;
-      color-scheme: dark;
-    }
+    --bg: #141a17; --panel: #1b2420; --ink: #e4ebe5; --muted: #93a398;
+    --line: #2f3b34; --alert: #ff6b55; --ok: #5fc58a; --accent: #1f5f8b;
+    color-scheme: dark;
   }
   * { box-sizing: border-box; }
   html, body { height: 100%; margin: 0; }
@@ -34,24 +27,45 @@ if (window.top !== window.self) {
     background: var(--bg); color: var(--ink);
     font: 15px/1.45 "Segoe UI", system-ui, -apple-system, sans-serif;
     display: grid; grid-template-columns: 340px 1fr; grid-template-rows: auto 1fr;
+    transition: background-color .2s, color .2s;
   }
   header {
     grid-column: 1 / 3; display: flex; align-items: center; gap: 12px;
     padding: 10px 16px; border-bottom: 1px solid var(--line); background: var(--panel);
+    transition: background-color .2s, border-color .2s;
   }
   h1 { font-size: 17px; margin: 0; font-weight: 650; }
   #status { margin-left: auto; font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
   #dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
   #dot.on { background: var(--ok); }
-  aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; }
+  aside { border-right: 1px solid var(--line); background: var(--panel); display: flex; flex-direction: column; min-height: 0; transition: background-color .2s; }
+  
+  /* Filter bar */
+  #filterBar {
+    display: flex; gap: 6px; padding: 8px 12px; border-bottom: 1px solid var(--line);
+    background: color-mix(in srgb, var(--panel) 92%, var(--ink) 8%);
+    flex-wrap: wrap; font-size: 12px;
+  }
+  .fb-item {
+    display: inline-flex; align-items: center; gap: 4px; cursor: pointer;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 5px;
+    padding: 3px 8px; color: var(--ink); user-select: none;
+  }
+  .fb-item input { margin: 0; cursor: pointer; }
+  .fb-count {
+    font-size: 11px; background: color-mix(in srgb, var(--line) 70%, transparent);
+    padding: 0 5px; border-radius: 8px; color: var(--muted); font-weight: 600;
+  }
+  .fb-item:hover { border-color: var(--accent); }
+
   #list { overflow: auto; flex: 1; }
   .empty { padding: 20px 16px; color: var(--muted); }
   .p {
     display: grid; grid-template-columns: 40px 1fr; gap: 10px; padding: 10px 16px;
     border-bottom: 1px solid var(--line); cursor: pointer; align-items: center;
   }
-  .p:hover, .p:focus-visible { background: color-mix(in srgb, var(--accent) 10%, transparent); outline: none; }
-  .p.sel { box-shadow: inset 4px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+  .p:hover, .p:focus-visible { background: color-mix(in srgb, var(--accent) 12%, transparent); outline: none; }
+  .p.sel { box-shadow: inset 4px 0 0 var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); }
   .p img { width: 40px; height: 40px; image-rendering: pixelated; border-radius: 4px; background: var(--line); }
   .p b { display: block; }
   .p.bad b { color: var(--alert); }
@@ -59,11 +73,38 @@ if (window.top !== window.self) {
   main { display: grid; grid-template-rows: 1fr 240px; min-height: 0; min-width: 0; }
   #mapwrap { position: relative; min-height: 0; border-bottom: 1px solid var(--line); }
   iframe { width: 100%; height: 100%; border: 0; background: var(--line); }
-  #tools { position: absolute; right: 64px; bottom: 12px; display: flex; gap: 8px; z-index: 6; }
-  #tools label, #tools a {
+  #tools { position: absolute; right: 16px; bottom: 12px; display: flex; gap: 8px; z-index: 6; flex-wrap: wrap; }
+  #tools label, #tools a, #tools select {
     background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
     padding: 5px 10px; font-size: 13px; color: var(--ink); text-decoration: none;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.3);
   }
+  #tools select { cursor: pointer; outline: none; padding: 4px 8px; }
+
+  /* Pin mode toggling */
+  #mapwrap.mode-body .pin-cube-view { display: none !important; }
+  #mapwrap.mode-cube .pin-body-view { display: none !important; }
+
+  /* Body Pin View */
+  .pin-body-view { position: absolute; left: 0; bottom: 0; pointer-events: none; }
+  .player-shadow {
+    position: absolute; left: -20px; top: -5px; width: 40px; height: 10px;
+    border-radius: 50%; background: rgba(0,0,0,0.55); filter: blur(2px);
+  }
+  .player-figure {
+    position: absolute; left: -26px; bottom: 0; width: 52px; height: 104px;
+    image-rendering: pixelated; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.65));
+    transform-origin: bottom center;
+  }
+  .player-nameplate {
+    position: absolute; left: 0; bottom: 110px; transform: translateX(-50%);
+    white-space: nowrap; font-size: 12px; font-weight: 600;
+    padding: 2px 8px; border-radius: 5px; color: #fff;
+    background: rgba(16, 22, 19, 0.9); border: 2px solid var(--c, #ff6b55);
+    box-shadow: 0 2px 8px rgba(0,0,0,0.6);
+  }
+
+  /* Cube Pin View */
   #pin { position: absolute; left: 50%; top: 50%; width: 0; height: 0; pointer-events: none; perspective: 400px; display: none; z-index: 5; }
   .cube { position: absolute; width: 36px; height: 36px; left: -18px; top: -18px; transform-style: preserve-3d; animation: spin 7s linear infinite; }
   .cube i { position: absolute; width: 36px; height: 36px; border: 3px solid var(--c, #ff6b55); box-sizing: border-box;
@@ -83,7 +124,9 @@ if (window.top !== window.self) {
     padding: 1px 7px; border-radius: 5px; color: #fff; background: var(--c, #ff6b55); }
   @keyframes spin { from { transform: rotateX(-25deg) rotateY(0deg); } to { transform: rotateX(-25deg) rotateY(360deg); } }
   @media (prefers-reduced-motion: reduce) { .cube { animation: none; transform: rotateX(-25deg) rotateY(25deg); } }
-    #radarThemeWrap {
+
+  /* Theme Controls */
+  #radarThemeWrap {
     display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--muted);
     margin-left: auto; margin-right: 14px;
   }
@@ -91,7 +134,7 @@ if (window.top !== window.self) {
   .c-preset {
     width: 20px; height: 20px; border-radius: 50%; border: 2px solid transparent;
     cursor: pointer; padding: 0; outline: none; transition: transform .15s, border-color .15s;
-    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.12);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,0.15);
   }
   .c-preset:hover { transform: scale(1.18); }
   .c-preset.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--panel), 0 0 5px var(--accent); }
@@ -102,15 +145,16 @@ if (window.top !== window.self) {
   }
   #radarBgPicker::-webkit-color-swatch-wrapper { padding: 0; }
   #radarBgPicker::-webkit-color-swatch { border: none; border-radius: 3px; }
-  @media (max-width: 650px) {
+  @media (max-width: 700px) {
     #radarThemeWrap { display: none; }
   }
+
   #tabs { display: flex; gap: 6px; margin-left: 16px; }
   .tab { font: inherit; font-size: 14px; padding: 4px 12px; border-radius: 6px; border: 1px solid var(--line); background: transparent; color: var(--ink); cursor: pointer; }
   .tab.on { background: var(--accent); border-color: var(--accent); color: #fff; }
   #console { position: fixed; left: 0; right: 0; bottom: 0; top: 45px; z-index: 20; background: var(--bg); display: none; flex-direction: column; gap: 10px; padding: 12px 16px; }
   #console.on { display: flex; }
-  #clog { flex: 1; min-height: 0; overflow: auto; background: #0b0f0d; color: #cfe8d6; border: 1px solid var(--line); border-radius: 6px; padding: 10px; font: 13px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+  #clog { flex: 1; min-height: 0; overflow: auto; background: color-mix(in srgb, var(--bg) 80%, #000 20%); color: var(--ink); border: 1px solid var(--line); border-radius: 6px; padding: 10px; font: 13px/1.5 ui-monospace, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
   #clog .in { color: #7ec8ff; }
   #clog .err { color: #ff9b8a; }
   #cform { display: flex; gap: 8px; }
@@ -119,9 +163,9 @@ if (window.top !== window.self) {
   #cform button.go { background: var(--accent); border-color: var(--accent); color: #fff; }
   #cquick { display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
   #cstat { margin-left: auto; font-size: 13px; color: var(--muted); }
-  #radar { width: 100%; height: 100%; display: block; background: var(--panel); }
+  #radar { width: 100%; height: 100%; display: block; background: var(--bg); }
   @media (max-width: 800px) {
-    body { grid-template-columns: 1fr; grid-template-rows: auto 220px 1fr; }
+    body { grid-template-columns: 1fr; grid-template-rows: auto 240px 1fr; }
     header { grid-column: 1; }
     aside { border-right: 0; border-bottom: 1px solid var(--line); }
   }
@@ -132,7 +176,7 @@ if (window.top !== window.self) {
   <h1>Радар базы</h1>
   <nav id="tabs"><button class="tab on" data-t="radar">Радар</button><button class="tab" data-t="console">Консоль</button></nav>
   <div id="radarThemeWrap">
-    <span>Фон радара:</span>
+    <span>Цвет темы:</span>
     <div class="color-presets">
       <button type="button" class="c-preset on" data-col="#141a17" title="Стандартный тёмный" style="background:#141a17"></button>
       <button type="button" class="c-preset" data-col="#03180c" title="Изумрудный радар" style="background:#03180c"></button>
@@ -140,23 +184,51 @@ if (window.top !== window.self) {
       <button type="button" class="c-preset" data-col="#080808" title="Глубокий чёрный" style="background:#080808"></button>
       <button type="button" class="c-preset" data-col="#1a1815" title="Угольный" style="background:#1a1815"></button>
     </div>
-    <input type="color" id="radarBgPicker" title="Выбрать свой цвет фона" value="#141a17">
+    <input type="color" id="radarBgPicker" title="Выбрать свой цвет темы" value="#141a17">
   </div>
   <div id="status"><span id="dot"></span><span id="stxt">Подключение…</span></div>
 </header>
 
 <aside>
+  <div id="filterBar">
+    <label class="fb-item" title="Показывать игроков">
+      <input type="checkbox" id="fPlayers" checked> <span>Игроки</span> <span class="fb-count" id="cPlayers">0</span>
+    </label>
+    <label class="fb-item" title="Показывать объекты (корабли, механизмы)">
+      <input type="checkbox" id="fObjects" checked> <span>Объекты</span> <span class="fb-count" id="cObjects">0</span>
+    </label>
+    <label class="fb-item" title="Скрывать клей (super_glue, honey_glue) и corpse">
+      <input type="checkbox" id="fHideGlue" checked> <span>Без клея</span>
+    </label>
+  </div>
   <div id="list"><div class="empty">Ждём данные от радара…</div></div>
 </aside>
 
 <main>
-  <div id="mapwrap">
+  <div id="mapwrap" class="mode-body">
     <iframe id="map" title="3D-карта сервера" allowfullscreen></iframe>
     <canvas id="ring"></canvas>
     <div id="pins"></div>
-    <div id="pin"><div class="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div><div id="pinlabel"></div></div>
+    <div id="pin">
+      <div class="pin-body-view">
+        <div class="player-shadow"></div>
+        <img class="player-figure" alt="" src="">
+        <div class="player-nameplate" id="bodypinlabel"></div>
+      </div>
+      <div class="pin-cube-view">
+        <div class="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+        <div id="pinlabel"></div>
+      </div>
+    </div>
     <div id="tools">
-      <label><input type="checkbox" id="follow" checked> Камера следует за игроком</label>
+      <label title="Внешний вид маркера игрока на 3D-карте">
+        Маркер:
+        <select id="pinStyle">
+          <option value="body">Фигура со скином</option>
+          <option value="cube">Вращающийся кубик</option>
+        </select>
+      </label>
+      <label><input type="checkbox" id="follow" checked> Следить камерой</label>
       <a id="open" href="#" target="_blank" rel="noopener">Открыть карту</a>
     </div>
   </div>
@@ -175,7 +247,7 @@ if (window.top !== window.self) {
 </section>
 
 <script>
-// ---- settings: change these two lines ----
+// ---- settings ----
 const MAP_URL = "/map/";
 let MAP_HASH = "#world";
 const BANDIT = "data:image/svg+xml," + encodeURIComponent(
@@ -187,9 +259,9 @@ const BANDIT = "data:image/svg+xml," + encodeURIComponent(
   '<rect x="5" y="4" width="2" height="1" fill="#fff"/><rect x="5" y="4" width="1" height="1" fill="#c4321f"/>' +
   '<rect x="3" y="5" width="2" height="1" fill="#a36f50"/><rect x="2" y="6" width="4" height="1" fill="#6d3b2c"/></svg>');
 const CAM_DIST = 150;
-// ------------------------------------------
 
 const $ = (id) => document.getElementById(id);
+
 // ---- UUID -> Nickname client cache & resolver ----
 const nickCache = (() => {
   try { return JSON.parse(localStorage.getItem("nick_cache") || "{}"); } catch (e) { return {}; }
@@ -237,10 +309,14 @@ async function resolveNick(uuid) {
   return null;
 }
 
-// ---- Radar background customization ----
-function getRadarBg() {
-  return localStorage.getItem("radar_bg") || "#141a17";
-}
+// ---- Theming the entire page ----
+const THEME_PRESETS = {
+  "#141a17": { bg: "#141a17", panel: "#1b2420", line: "#2f3b34", accent: "#1f5f8b" },
+  "#03180c": { bg: "#03180c", panel: "#082414", line: "#133a22", accent: "#239d5b" },
+  "#061220": { bg: "#061220", panel: "#0d1e34", line: "#1a3559", accent: "#2583d8" },
+  "#080808": { bg: "#080808", panel: "#141414", line: "#262626", accent: "#3d78ad" },
+  "#1a1815": { bg: "#1a1815", panel: "#24211d", line: "#39342e", accent: "#b27329" },
+};
 function isBgBright(hex) {
   if (!hex || typeof hex !== "string" || !hex.startsWith("#")) return false;
   let c = hex.slice(1);
@@ -250,13 +326,40 @@ function isBgBright(hex) {
   const r = (num >> 16) & 255, g = (num >> 8) & 255, b = num & 255;
   return (r * 299 + g * 587 + b * 114) / 1000 > 130;
 }
-function setRadarBg(color) {
+function getRadarBg() {
+  return localStorage.getItem("radar_bg") || "#141a17";
+}
+function applyThemeColor(color) {
   localStorage.setItem("radar_bg", color);
+  const root = document.documentElement;
+  let t = THEME_PRESETS[color.toLowerCase()];
+  if (!t) {
+    t = {
+      bg: color,
+      panel: `color-mix(in srgb, ${color} 80%, white 20%)`,
+      line: `color-mix(in srgb, ${color} 65%, white 35%)`,
+      accent: "#3a8cd2"
+    };
+  }
+  root.style.setProperty("--bg", t.bg);
+  root.style.setProperty("--panel", t.panel);
+  root.style.setProperty("--line", t.line);
+  if (t.accent) root.style.setProperty("--accent", t.accent);
+  const bright = isBgBright(t.bg);
+  root.style.setProperty("--ink", bright ? "#111814" : "#e4ebe5");
+  root.style.setProperty("--muted", bright ? "#4a5951" : "#93a398");
+
   if ($("radarBgPicker")) $("radarBgPicker").value = color;
   document.querySelectorAll(".c-preset").forEach((btn) => {
     btn.classList.toggle("on", (btn.dataset.col || "").toLowerCase() === color.toLowerCase());
   });
   render();
+}
+
+// ---- Filtering ----
+function isGlueObject(o) {
+  const n = String(o.name || "").toLowerCase();
+  return n.includes("glue") || n === "corpse" || n.includes("super_glue") || n.includes("honey_glue");
 }
 
 let state = { players: [], objects: [], online: false };
@@ -277,21 +380,34 @@ function render() {
   dot.className = state.online ? "on" : "";
   stxt.textContent = state.online ? "Радар на связи" : "Нет связи с компьютером";
 
+  const showPlayers = $("fPlayers").checked;
+  const showObjects = $("fObjects").checked;
+  const hideGlue = $("fHideGlue").checked;
+
+  $("cPlayers").textContent = state.players.length;
+  const allObjects = (state.objects || []);
+  const validObjects = allObjects.filter((o) => !hideGlue || !isGlueObject(o));
+  $("cObjects").textContent = validObjects.length;
+
   const list = $("list");
   list.textContent = "";
-  const ps = state.players.slice().sort((a, b) => a.friend - b.friend);
-  const os = state.objects || [];
+
+  const ps = showPlayers ? state.players.slice().sort((a, b) => a.friend - b.friend) : [];
+  const os = showObjects ? validObjects : [];
+
   if (!ps.length && !os.length) {
     const d = document.createElement("div");
     d.className = "empty";
-    d.textContent = state.online ? "В зоне радара никого нет." : "Ждём данные от радара…";
+    d.textContent = state.online ? "В зоне радара ничего не найдено по текущим фильтрам." : "Ждём данные от радара…";
     list.appendChild(d);
   }
+
   if (selected && !ps.find((p) => p.id === selected) && !os.find((o) => o.id === selected)) selected = null;
   if (!selected) {
-    const bad = ps.find((p) => !p.friend) || ps[0];
+    const bad = ps.find((p) => !p.friend) || ps[0] || os[0];
     if (bad) selected = bad.id;
   }
+
   for (const p of ps) {
     const row = document.createElement("div");
     row.className = "p" + (p.friend ? "" : " bad") + (p.id === selected ? " sel" : "");
@@ -324,7 +440,7 @@ function render() {
   if (os.length) {
     const sec = document.createElement("div");
     sec.className = "sec";
-    sec.textContent = "Объекты";
+    sec.textContent = "Объекты (" + os.length + ")";
     list.appendChild(sec);
     for (const o of os) {
       const row = document.createElement("div");
@@ -348,10 +464,9 @@ function render() {
     }
   }
 
-  // the camera itself is moved from the animation loop (pinsFrame), smoothly
   const sel = ps.find((p) => p.id === selected) || os.find((o) => o.id === selected);
   $("open").href = sel ? MAP_URL + mapLink(sel) : MAP_URL;
-  drawRadar(ps);
+  drawRadar(ps, os);
   updatePin();
 }
 
@@ -381,7 +496,7 @@ function track(list) {
 
 function getPos(id) {
   const r = T[id];
-  return r ? { x: r.x, y: r.y, z: r.z } : null;   // exactly what the radar last reported, no prediction
+  return r ? { x: r.x, y: r.y, z: r.z } : null;
 }
 
 // ---- pins anchored to the world: project player coordinates with the map's own camera ----
@@ -410,7 +525,17 @@ function findCam() {
 function makePin() {
   const el = document.createElement("div");
   el.className = "pp";
-  el.innerHTML = '<div class="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="pl"></div>';
+  el.innerHTML = `
+    <div class="pin-body-view">
+      <div class="player-shadow"></div>
+      <img class="player-figure" alt="" src="${BANDIT}">
+      <div class="player-nameplate"></div>
+    </div>
+    <div class="pin-cube-view">
+      <div class="cube"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+      <div class="pl"></div>
+    </div>
+  `;
   $("pins").appendChild(el);
   return el;
 }
@@ -430,38 +555,42 @@ function drawRing(V, P, W, H) {
     return cw > 0 ? [(cx / cw * 0.5 + 0.5) * W, (1 - (cy / cw * 0.5 + 0.5)) * H] : null;
   };
   if (r) {
-  const N = 96, pts = [];
-  for (let i = 0; i <= N; i++) {
-    const a = (i / N) * Math.PI * 2;
-    pts.push(pr(r.x + Math.cos(a) * r.range, r.y, r.z + Math.sin(a) * r.range));
+    const N = 96, pts = [];
+    for (let i = 0; i <= N; i++) {
+      const a = (i / N) * Math.PI * 2;
+      pts.push(pr(r.x + Math.cos(a) * r.range, r.y, r.z + Math.sin(a) * r.range));
+    }
+    g.lineWidth = 2; g.strokeStyle = "rgba(109,183,232,.95)"; g.fillStyle = "rgba(109,183,232,.10)";
+    g.setLineDash([10, 6]);
+    g.beginPath();
+    let pen = false, all = true;
+    for (const p of pts) {
+      if (!p) { pen = false; all = false; continue; }
+      if (pen) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]);
+      pen = true;
+    }
+    if (all) g.fill();
+    g.stroke();
+    g.setLineDash([]);
+    const o = pr(r.x, r.y, r.z);
+    if (o) {
+      g.fillStyle = "rgba(109,183,232,1)";
+      g.fillRect(o[0] - 4, o[1] - 4, 8, 8);
+      g.font = "600 12px system-ui, sans-serif";
+      g.fillText("Радар · " + Math.round(r.range) + " бл.", o[0] + 9, o[1] + 4);
+    }
   }
-  g.lineWidth = 2; g.strokeStyle = "rgba(109,183,232,.95)"; g.fillStyle = "rgba(109,183,232,.10)";
-  g.setLineDash([10, 6]);
-  g.beginPath();
-  let pen = false, all = true;
-  for (const p of pts) {
-    if (!p) { pen = false; all = false; continue; }
-    if (pen) g.lineTo(p[0], p[1]); else g.moveTo(p[0], p[1]);
-    pen = true;
+  if ($("fObjects").checked) {
+    drawObjects(g, pr);
   }
-  if (all) g.fill();
-  g.stroke();
-  g.setLineDash([]);
-  const o = pr(r.x, r.y, r.z);
-  if (o) {
-    g.fillStyle = "rgba(109,183,232,1)";
-    g.fillRect(o[0] - 4, o[1] - 4, 8, 8);
-    g.font = "600 12px system-ui, sans-serif";
-    g.fillText("Радар · " + Math.round(r.range) + " бл.", o[0] + 9, o[1] + 4);
-  }
-  }
-  drawObjects(g, pr);
 }
 
 function drawObjects(g, pr) {
+  const hideGlue = $("fHideGlue").checked;
+  const objs = (state.objects || []).filter((o) => !hideGlue || !isGlueObject(o));
   const E = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
   const C = [[-1,-1,-1],[1,-1,-1],[1,1,-1],[-1,1,-1],[-1,-1,1],[1,-1,1],[1,1,1],[-1,1,1]];
-  for (const o of state.objects || []) {
+  for (const o of objs) {
     const q = cur[o.id] || o;
     const known = o.l > 0 && o.w > 0 && o.h > 0;
     const l = known ? o.l : 4, w = known ? o.w : 4, h = known ? o.h : 3;
@@ -487,7 +616,6 @@ function pinsFrame() {
   requestAnimationFrame(pinsFrame);
   if (!mapReady) return;
   const now = Date.now(), pn = performance.now();
-  const fdt = Math.min((pn - lastFrameT) / 1000, 0.1);
   lastFrameT = pn;
   cur = {};
   for (const e of state.players.concat(state.objects || [])) { const q = getPos(e.id); if (q) cur[e.id] = q; }
@@ -499,34 +627,56 @@ function pinsFrame() {
   const V = cam.matrixWorldInverse.elements, P = cam.projectionMatrix.elements;
   const W = $("mapwrap").clientWidth, H = $("mapwrap").clientHeight;
   drawRing(V, P, W, H);
+
+  const showPlayers = $("fPlayers").checked;
   const alive = new Set();
-  for (const p of state.players) {
-    alive.add(p.id);
-    const el = pins[p.id] || (pins[p.id] = makePin());
-    const q = cur[p.id] || p;
-    const x = q.x, y = q.y + 2, z = q.z;
-    const vx = V[0]*x + V[4]*y + V[8]*z + V[12];
-    const vy = V[1]*x + V[5]*y + V[9]*z + V[13];
-    const vz = V[2]*x + V[6]*y + V[10]*z + V[14];
-    const cx = P[0]*vx + P[4]*vy + P[8]*vz + P[12];
-    const cy = P[1]*vx + P[5]*vy + P[9]*vz + P[13];
-    const cw = P[3]*vx + P[7]*vy + P[11]*vz + P[15];
-    const sx = (cx / cw * 0.5 + 0.5) * W, sy = (1 - (cy / cw * 0.5 + 0.5)) * H;
-    if (!(cw > 0) || !isFinite(sx) || sx < -60 || sy < -60 || sx > W + 60 || sy > H + 60) { el.style.display = "none"; continue; }
-    el.style.display = "block";
-    el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`;
-    const pName = p.name || nickCache[p.id] || "";
-    const src = pName ? `https://minotar.net/helm/${encodeURIComponent(pName)}/64.png` : BANDIT;
-    if (el.dataset.src !== src) {
-      el.dataset.src = src;
-      el.querySelectorAll(".cube i").forEach((f) => { f.style.backgroundImage = `url("${src}")`; });
+  if (showPlayers) {
+    for (const p of state.players) {
+      alive.add(p.id);
+      const el = pins[p.id] || (pins[p.id] = makePin());
+      const q = cur[p.id] || p;
+      const x = q.x, y = q.y + 2, z = q.z;
+      const vx = V[0]*x + V[4]*y + V[8]*z + V[12];
+      const vy = V[1]*x + V[5]*y + V[9]*z + V[13];
+      const vz = V[2]*x + V[6]*y + V[10]*z + V[14];
+      const cx = P[0]*vx + P[4]*vy + P[8]*vz + P[12];
+      const cy = P[1]*vx + P[5]*vy + P[9]*vz + P[13];
+      const cw = P[3]*vx + P[7]*vy + P[11]*vz + P[15];
+      const sx = (cx / cw * 0.5 + 0.5) * W, sy = (1 - (cy / cw * 0.5 + 0.5)) * H;
+      if (!(cw > 0) || !isFinite(sx) || sx < -60 || sy < -140 || sx > W + 60 || sy > H + 60) { el.style.display = "none"; continue; }
+      el.style.display = "block";
+      el.style.transform = `translate(${sx.toFixed(1)}px, ${sy.toFixed(1)}px)`;
+      
+      const pName = p.name || nickCache[p.id] || "";
+      const color = p.friend ? "#5fc58a" : "#ff6b55";
+      el.style.setProperty("--c", color);
+      const dr = distR(q);
+      const labelText = p.friend ? (pName || "Друг") : (pName ? `${pName} [чужой]` : "Чужой " + p.id.slice(0, 4));
+      const lbl = labelText + (dr != null ? " · " + dr + " бл." : "");
+
+      // 1. Update Body View
+      const bodyImg = el.querySelector(".player-figure");
+      const expectedBody = pName ? `https://minotar.net/armor/body/${encodeURIComponent(pName)}/120.png` : BANDIT;
+      if (bodyImg.dataset.src !== expectedBody) {
+        bodyImg.dataset.src = expectedBody;
+        bodyImg.src = expectedBody;
+        bodyImg.onerror = () => {
+          bodyImg.onerror = null;
+          bodyImg.src = pName ? `https://mc-heads.net/body/${encodeURIComponent(pName)}/120.png` : BANDIT;
+        };
+      }
+      const np = el.querySelector(".player-nameplate");
+      if (np.textContent !== lbl) np.textContent = lbl;
+
+      // 2. Update Cube View
+      const headSrc = pName ? `https://minotar.net/helm/${encodeURIComponent(pName)}/64.png` : BANDIT;
+      if (el.dataset.headSrc !== headSrc) {
+        el.dataset.headSrc = headSrc;
+        el.querySelectorAll(".cube i").forEach((f) => { f.style.backgroundImage = `url("${headSrc}")`; });
+      }
+      const pl = el.querySelector(".pl");
+      if (pl.textContent !== lbl) pl.textContent = lbl;
     }
-    el.style.setProperty("--c", p.friend ? "#5fc58a" : "#ff6b55");
-    const dr = distR(q);
-    const labelText = p.friend ? (pName || "Друг") : (pName ? `${pName} [чужой]` : "Чужой " + p.id.slice(0, 4));
-    const lbl = labelText + (dr != null ? " · " + dr + " бл." : "");
-    const pl = el.querySelector(".pl");
-    if (pl.textContent !== lbl) pl.textContent = lbl;
   }
   for (const id in pins) if (!alive.has(id)) { pins[id].remove(); delete pins[id]; }
 }
@@ -536,7 +686,7 @@ function updatePin() {
   const pin = $("pin");
   if (camOk) { pin.style.display = "none"; return; }
   const sel = state.players.find((p) => p.id === selected);
-  if (!sel || !mapReady) { pin.style.display = "none"; return; }
+  if (!sel || !mapReady || !$("fPlayers").checked) { pin.style.display = "none"; return; }
   let near = true;
   try {
     const parts = $("map").contentWindow.location.hash.replace("#", "").split(":");
@@ -546,13 +696,27 @@ function updatePin() {
   if (!near) { pin.style.display = "none"; return; }
   const pName = sel.name || nickCache[sel.id] || "";
   const color = sel.friend ? "#5fc58a" : "#ff6b55";
-  const src = pName ? `https://minotar.net/helm/${encodeURIComponent(pName)}/64.png` : BANDIT;
-  if (pin.dataset.src !== src) {
-    pin.dataset.src = src;
-    pin.querySelectorAll(".cube i").forEach((f) => { f.style.backgroundImage = `url("${src}")`; });
-  }
   pin.style.setProperty("--c", color);
-  $("pinlabel").textContent = sel.friend ? (pName || "Друг") : (pName ? `${pName} [чужой]` : "Чужой " + sel.id.slice(0, 4));
+  const dr = distR(sel);
+  const labelText = sel.friend ? (pName || "Друг") : (pName ? `${pName} [чужой]` : "Чужой " + sel.id.slice(0, 4));
+  const lbl = labelText + (dr != null ? " · " + dr + " бл." : "");
+
+  // Body View
+  const bodyImg = pin.querySelector(".player-figure");
+  const expectedBody = pName ? `https://minotar.net/armor/body/${encodeURIComponent(pName)}/120.png` : BANDIT;
+  if (bodyImg.dataset.src !== expectedBody) {
+    bodyImg.dataset.src = expectedBody;
+    bodyImg.src = expectedBody;
+  }
+  $("bodypinlabel").textContent = lbl;
+
+  // Cube View
+  const headSrc = pName ? `https://minotar.net/helm/${encodeURIComponent(pName)}/64.png` : BANDIT;
+  if (pin.dataset.headSrc !== headSrc) {
+    pin.dataset.headSrc = headSrc;
+    pin.querySelectorAll(".cube i").forEach((f) => { f.style.backgroundImage = `url("${headSrc}")`; });
+  }
+  $("pinlabel").textContent = lbl;
   pin.style.display = "block";
 }
 setInterval(updatePin, 300);
@@ -565,21 +729,21 @@ function moveCamera(p, force) {
   if (!force && (!moved || now - lastCamTime < 120)) return;
   try {
     const w = $("map").contentWindow;
-    if (!w.location.pathname.startsWith("/map")) {   // frame wandered off the map: reload it once
+    if (!w.location.pathname.startsWith("/map")) {
       lastCamTime = now;
-      if (now - (window.__lastReload || 0) > 30000) {   // never reload the map more than once per 30 s
+      if (now - (window.__lastReload || 0) > 30000) {
         window.__lastReload = now;
         $("map").src = MAP_URL + mapLink(p);
       }
       return;
     }
-    w.location.replace(MAP_URL + mapLink(p));   // full path: a bare #hash resolves against BlueMap's <base> and opens the site itself
+    w.location.replace(MAP_URL + mapLink(p));
     lastCam = { id: p.id, x: p.x, y: p.y, z: p.z };
     lastCamTime = now;
   } catch (e) {}
 }
 
-function drawRadar(ps) {
+function drawRadar(ps, os) {
   const c = $("radar");
   const dpr = window.devicePixelRatio || 1;
   const w = c.clientWidth, h = c.clientHeight;
@@ -594,7 +758,7 @@ function drawRadar(ps) {
   g.fillRect(0, 0, w, h);
   const bright = isBgBright(bg);
   const rd = state.radar;
-  const os = state.objects || [];
+  ps = ps || []; os = os || [];
   if (!ps.length && !rd && !os.length) return;
 
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
@@ -617,7 +781,7 @@ function drawRadar(ps) {
   const sc = (Math.min(w, h) - pad * 2) / span;
   const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
   const X = (x) => w / 2 + (x - cx) * sc;
-  const Z = (z) => h / 2 + (z - cz) * sc;   // north (−z) is up
+  const Z = (z) => h / 2 + (z - cz) * sc;
 
   g.strokeStyle = bright ? "rgba(0,0,0,0.12)" : "rgba(255,255,255,0.08)"; g.lineWidth = 1;
   for (let i = 1; i < 4; i++) {
@@ -661,9 +825,16 @@ function connect() {
   es.onmessage = (e) => { state = JSON.parse(e.data); state.objects = state.objects || []; track(state.players.concat(state.objects)); render(); };
   es.onerror = () => { state.online = false; render(); };
 }
-window.addEventListener("resize", () => drawRadar(state.players));
+window.addEventListener("resize", () => {
+  const showPlayers = $("fPlayers").checked;
+  const hideGlue = $("fHideGlue").checked;
+  const ps = showPlayers ? state.players : [];
+  const os = $("fObjects").checked ? (state.objects || []).filter(o => !hideGlue || !isGlueObject(o)) : [];
+  drawRadar(ps, os);
+});
 $("follow").addEventListener("change", () => { lastCam = null; render(); });
 $("map").addEventListener("load", () => { mapReady = true; cam = null; lastFind = 0; lastCam = null; render(); });
+
 // ---- remote console ----
 let cSince = 0, cTimer = null;
 const cHist = []; let cHi = 0;
@@ -716,16 +887,45 @@ window.addEventListener("resize", () => { if ($("console").classList.contains("o
 // map source
 $("map").src = MAP_URL + MAP_HASH;
 
-// init radar background UI
+// init theme
 const savedBg = getRadarBg();
+applyThemeColor(savedBg);
 if ($("radarBgPicker")) {
-  $("radarBgPicker").value = savedBg;
-  $("radarBgPicker").addEventListener("input", (e) => setRadarBg(e.target.value));
+  $("radarBgPicker").addEventListener("input", (e) => applyThemeColor(e.target.value));
 }
 document.querySelectorAll(".c-preset").forEach((btn) => {
-  btn.classList.toggle("on", (btn.dataset.col || "").toLowerCase() === savedBg.toLowerCase());
-  btn.addEventListener("click", () => setRadarBg(btn.dataset.col));
+  btn.addEventListener("click", () => applyThemeColor(btn.dataset.col));
 });
+
+// init filters
+const fP = localStorage.getItem("radar_show_players");
+if (fP !== null) $("fPlayers").checked = fP === "true";
+const fO = localStorage.getItem("radar_show_objects");
+if (fO !== null) $("fObjects").checked = fO === "true";
+const fG = localStorage.getItem("radar_hide_glue");
+if (fG !== null) $("fHideGlue").checked = fG === "true";
+
+["fPlayers", "fObjects", "fHideGlue"].forEach((id) => {
+  $(id).addEventListener("change", () => {
+    localStorage.setItem("radar_show_players", $("fPlayers").checked);
+    localStorage.setItem("radar_show_objects", $("fObjects").checked);
+    localStorage.setItem("radar_hide_glue", $("fHideGlue").checked);
+    render();
+  });
+});
+
+// init pin style
+const pinSelect = $("pinStyle");
+const savedPinStyle = localStorage.getItem("radar_pin_style") || "body";
+pinSelect.value = savedPinStyle;
+function updatePinStyleUI() {
+  const v = pinSelect.value;
+  localStorage.setItem("radar_pin_style", v);
+  $("mapwrap").classList.toggle("mode-body", v === "body");
+  $("mapwrap").classList.toggle("mode-cube", v === "cube");
+}
+pinSelect.addEventListener("change", updatePinStyleUI);
+updatePinStyleUI();
 
 connect();
 </script>
