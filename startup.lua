@@ -239,23 +239,23 @@ local function sendDiscordAlert(nick, uuid, pos, mapUrl, siteUrl)
     return false
   end
   local d = distFromRadar(pos)
-  local distTxt = d and (tostring(d) .. " бл. от радара") or "неизвестно"
+  local distTxt = d and (tostring(d) .. " blocks from radar") or "unknown"
   local hasNick = nick and nick ~= "" and nick ~= uuid
-  local displayNick = hasNick and nick or "Не определен"
-  local title = hasNick and ("🚨 ОБНАРУЖЕН ЧУЖОЙ ИГРОК: " .. nick) or "🚨 ОБНАРУЖЕН НЕИЗВЕСТНЫЙ ИГРОК"
+  local displayNick = hasNick and nick or "Unknown"
+  local title = hasNick and ("\xF0\x9F\x9A\xA8 INTRUDER DETECTED: " .. nick) or "\xF0\x9F\x9A\xA8 UNKNOWN PLAYER DETECTED"
   local avatar = hasNick and ("https://minotar.net/helm/" .. textutils.urlEncode(nick) .. "/64.png") or nil
 
   local fields = {
-    { name = "Никнейм", value = "**" .. displayNick .. "**", inline = true },
-    { name = "Дистанция", value = distTxt, inline = true },
-    { name = "Координаты", value = ("X: `%d` | Y: `%d` | Z: `%d`"):format(math.floor(pos.x), math.floor(pos.y), math.floor(pos.z)), inline = false },
+    { name = "Nick", value = "**" .. displayNick .. "**", inline = true },
+    { name = "Distance", value = distTxt, inline = true },
+    { name = "Coordinates", value = ("X: `%d` | Y: `%d` | Z: `%d`"):format(math.floor(pos.x), math.floor(pos.y), math.floor(pos.z)), inline = false },
     { name = "UUID", value = "`" .. uuid .. "`", inline = false }
   }
   if mapUrl and mapUrl ~= "" then
-    fields[#fields + 1] = { name = "3D-Карта", value = "[Открыть на карте](" .. mapUrl .. ")", inline = true }
+    fields[#fields + 1] = { name = "3D Map", value = "[Open map](" .. mapUrl .. ")", inline = true }
   end
   if siteUrl and siteUrl ~= "" then
-    fields[#fields + 1] = { name = "Сайт радара", value = "[Открыть сайт](" .. siteUrl .. ")", inline = true }
+    fields[#fields + 1] = { name = "Radar site", value = "[Open site](" .. siteUrl .. ")", inline = true }
   end
 
   local embed = {
@@ -266,17 +266,17 @@ local function sendDiscordAlert(nick, uuid, pos, mapUrl, siteUrl)
   if avatar then embed.thumbnail = { url = avatar } end
 
   local payload = {
-    content = "@here 🚨 **Обнаружен чужой игрок в зоне действия радара!**",
+    content = "@here \xF0\x9F\x9A\xA8 **INTRUDER detected in radar zone!**",
     embeds = { embed }
   }
   local body = textutils.serializeJSON(payload)
-  local ok, err = http.post(data.webhook, body, { ["Content-Type"] = "application/json" })
+  local ok, err = http.post(data.webhook, body, { ["Content-Type"] = "application/json; charset=utf-8" })
   if ok then ok.close() return true end
 
   -- Fallback to plain text
-  local plain = ("@here 🚨 **%s**\nНик: **%s** | Дистанция: %s\nКоординаты: X:%d Y:%d Z:%d\nUUID: %s\nКарта: <%s>"):format(
+  local plain = ("@here \xF0\x9F\x9A\xA8 **%s**\nNick: **%s** | Distance: %s\nCoords: X:%d Y:%d Z:%d\nUUID: %s\nMap: <%s>"):format(
     title, displayNick, distTxt, math.floor(pos.x), math.floor(pos.y), math.floor(pos.z), uuid, mapUrl or "")
-  if siteUrl and siteUrl ~= "" then plain = plain .. "\nСайт: <" .. siteUrl .. ">" end
+  if siteUrl and siteUrl ~= "" then plain = plain .. "\nSite: <" .. siteUrl .. ">" end
   return sendDiscord(plain)
 end
 
