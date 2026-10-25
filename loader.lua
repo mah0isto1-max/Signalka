@@ -1,3 +1,1 @@
-local u="https://raw.githubusercontent.com/mah0isto1-max/Signalka/main/startup.lua"
-local res=http and http.get(u);if not res then print("Ошибка загрузки");sleep(3);os.reboot()end
-local fn,err=load(res.readAll(),"github","t",_ENV);res.close();if not fn then print("Ошибка кода: "..(err or"?"));sleep(3);os.reboot()end;local ok,e=pcall(fn);if not ok then print("Ошибка запуска: "..tostring(e));sleep(3);os.reboot()end
+local u="https://raw.githubusercontent.com/mah0isto1-max/Signalka/main/startup.lua";local function e(m)print(m)sleep(3)os.reboot()end;local r=http and http.get(u);if not r then e("Ошибка загрузки")end;local fn,er=load(r.readAll(),"github","t",_ENV);r.close();if not fn then e("Ошибка: "..tostring(er))end;local ok,er2=pcall(fn);if not ok then e("Вылет: "..tostring(er2))end
