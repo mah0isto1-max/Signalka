@@ -1561,6 +1561,66 @@ function drawRing(V, P, W, H) {
       g.fillText("Радар · " + Math.round(r.range) + " бл.", o[0] + 9, o[1] + 4);
     }
   }
+  
+  // ---- Draw Artillery & AA Cannons on the Map ----
+  if (Array.isArray(state.guns)) {
+    for (const gun of state.guns) {
+      const gp = pr(gun.x, gun.y, gun.z);
+      if (gp) {
+        // Gun Range Circle
+        const gRange = gun.range || 350;
+        const gN = 64, gpts = [];
+        for (let i = 0; i <= gN; i++) {
+          const a = (i / gN) * Math.PI * 2;
+          gpts.push(pr(gun.x + Math.cos(a) * gRange, gun.y, gun.z + Math.sin(a) * gRange));
+        }
+        g.lineWidth = 2;
+        g.strokeStyle = "rgba(255, 165, 2, 0.85)";
+        g.fillStyle = "rgba(255, 165, 2, 0.08)";
+        g.setLineDash([8, 6]);
+        g.beginPath();
+        let pen = false;
+        for (const pt of gpts) {
+          if (!pt) { pen = false; continue; }
+          if (pen) g.lineTo(pt[0], pt[1]); else g.moveTo(pt[0], pt[1]);
+          pen = true;
+        }
+        g.stroke();
+        g.setLineDash([]);
+
+        // Gun Center Icon & Label
+        g.fillStyle = "#ff4757";
+        g.beginPath();
+        g.arc(gp[0], gp[1], 7, 0, Math.PI * 2);
+        g.fill();
+        g.strokeStyle = "#fff";
+        g.lineWidth = 2;
+        g.stroke();
+
+        // Direction / Aim Ray from Gun
+        if (typeof gun.yaw === "number") {
+          const yawRad = (gun.yaw + 90) * (Math.PI / 180);
+          const rayLen = 50;
+          const rayEnd = pr(gun.x - Math.sin(gun.yaw * Math.PI/180) * rayLen, gun.y, gun.z + Math.cos(gun.yaw * Math.PI/180) * rayLen);
+          if (rayEnd) {
+            g.strokeStyle = "rgba(255, 71, 87, 0.9)";
+            g.lineWidth = 2.5;
+            g.beginPath();
+            g.moveTo(gp[0], gp[1]);
+            g.lineTo(rayEnd[0], rayEnd[1]);
+            g.stroke();
+          }
+        }
+
+        // Gun Label
+        g.fillStyle = "#ffa502";
+        g.font = "bold 13px system-ui, sans-serif";
+        const gStatus = gun.status === "LOCKED" ? " [🎯 ЗАХВАТ]" : " [ГОТОВО]";
+        g.fillText("💥 " + gun.name + gStatus, gp[0] + 12, gp[1] + 4);
+      }
+    }
+  }
+
   if ($("fObjects").checked) {
     drawObjects(g, pr);
   }

@@ -782,19 +782,67 @@ local function autoDetectPvoGuns()
   return pCtrl, yCtrl, fCtrl
 end
 
+
+-- ---- Radar Management (Base Alarm Radar vs Gun Radar) ----
+local function getAllRadars()
+  local list = {}
+  for _, name in ipairs(peripheral.getNames()) do
+    local pType = tostring(peripheral.getType(name) or "")
+    if pType:find("radar") or pType:find("bearing") then
+      local p = peripheral.wrap(name)
+      if p and p.getTracks then
+        table.insert(list, { name = name, wrap = p, type = pType })
+      end
+    end
+  end
+  return list
+end
+
+local function getGunRadar()
+  local radars = getAllRadars()
+  if #radars == 0 then return nil end
+
+  -- 1. Check if user configured a specific gun radar name
+  if data.gunRadarName then
+    for _, r in ipairs(radars) do
+      if r.name == data.gunRadarName then return r.wrap, r.name end
+    end
+  end
+
+  -- 2. If multiple radars, pick the one connected to gun or second radar
+  if #radars >= 2 then
+    -- If the first radar is the base alarm radar, pick the other one for the gun
+    for _, r in ipairs(radars) do
+      if r.wrap ~= radar then
+        return r.wrap, r.name
+      end
+    end
+  end
+
+  -- 3. Fallback to default radar
+  return radars[1].wrap, radars[1].name
+end
+
+
 local function getGunsList()
   local list = {}
   local pCtrl, yCtrl, fCtrl = autoDetectPvoGuns()
-  if pCtrl or yCtrl or fCtrl then
+  local gunR, gunRName = getGunRadar()
+  
+  if pCtrl or yCtrl or fCtrl or gunR then
     local curP = (pCtrl and pCtrl.getAngle and pCtrl.getAngle()) or 0
     local curY = (yCtrl and yCtrl.getAngle and yCtrl.getAngle()) or 0
-    local gx = (data.radar and data.radar.x) or 0
-    local gy = (data.radar and data.radar.y) or 70
-    local gz = (data.radar and data.radar.z) or 0
+    
+    -- Exact gun coordinates from gun's radar position
+    local gPos = (gunR and gunR.getPosition and gunR.getPosition()) or (data.radar and data.radar) or {x=0, y=70, z=0}
+    local gRange = (gunR and gunR.getRange and gunR.getRange()) or 350
+    
     table.insert(list, {
       id = "gun_main",
-      name = "Орудие ПВО #1 (CBC)",
-      x = gx, y = gy, z = gz,
+      name = "Орудие ПВО (CBC)",
+      radarName = gunRName or "авто",
+      x = gPos.x, y = gPos.y, z = gPos.z,
+      range = gRange,
       pitch = curP,
       yaw = curY,
       lockedId = pvoState and pvoState.lockedId or nil,
@@ -803,6 +851,7 @@ local function getGunsList()
   end
   return list
 end
+
 
 
 
@@ -833,11 +882,14 @@ local function calculateLeadPvo(gunPos, targetPos, targetVel, muzzleVel, gravity
 end
 
 
+
 local function pvoLoop()
   while true do
     if pvoState.lockedId then
-      local pitchCtrl, yawCtrl, _ = autoDetectPvoGuns()
-      local allTracks = getAllTracks()
+      local pitchCtrl, yawCtrl, fireCtrl = autoDetectPvoGuns()
+      local gunR, gunRName = getGunRadar()
+      local allTracks = (gunR and gunR.getTracks and gunR.getTracks()) or getAllTracks()
+      
       local found = nil
       for _, tr in ipairs(allTracks) do
         if tostring(tr.id) == tostring(pvoState.lockedId) then
@@ -845,10 +897,16 @@ local function pvoLoop()
           break
         end
       end
-      if found and data.radar then
+      
+      local gunPos = (gunR and gunR.getPosition and gunR.getPosition()) or (data.radar and data.radar)
+      
+      if found and gunPos then
         local pos = found.position or { x = 0, y = 0, z = 0 }
         local vel = found.velocity or { x = 0, y = 0, z = 0 }
-        local yaw, pitch, tof = calculateLeadPvo(data.radar, pos, vel, 60.0, 1.0)
+        
+        -- Exact CBC ballistic lead & gravity drop calculation
+        local yaw, pitch, tof = calculateLeadPvo(gunPos, pos, vel, 70.0, 1.25)
+        
         if yawCtrl and yawCtrl.setAngle then yawCtrl.setAngle(yaw) end
         if pitchCtrl and pitchCtrl.setAngle then pitchCtrl.setAngle(pitch) end
       else
@@ -858,6 +916,8 @@ local function pvoLoop()
     sleep(0.05)
   end
 end
+
+
 
 local function cmdPvo(arg)
   local sub, rest = (arg or ""):match("^(%S+)%s*(.-)$")
@@ -872,6 +932,19 @@ local function cmdPvo(arg)
     if pitchCtrl and pitchCtrl.stopAuto then pitchCtrl.stopAuto() end
     if yawCtrl and yawCtrl.stopAuto then yawCtrl.stopAuto() end
     say("[PVO] Target unlocked. Gun standing by.")
+  elseif sub == "radar" then
+    if rest and rest ~= "" then
+      data.gunRadarName = rest
+      save()
+      say("[PVO] Gun radar bound to: " .. rest)
+    else
+      local gunR, gunRName = getGunRadar()
+      say("[PVO] Current gun radar: " .. tostring(gunRName or "not found"))
+      say("Available radars:")
+      for _, r in ipairs(getAllRadars()) do
+        say(" - " .. r.name .. " (" .. r.type .. ")")
+      end
+    end
   elseif sub == "fire" then
     local _, _, fireCtrl = autoDetectPvoGuns()
     if fireCtrl and fireCtrl.fireOn then
@@ -886,11 +959,14 @@ local function cmdPvo(arg)
       say("[PVO] >> PULSED REDSTONE FIRE <<")
     end
   elseif sub == "status" then
+    local gunR, gunRName = getGunRadar()
+    say("[PVO] Gun Radar: " .. tostring(gunRName or "none"))
     say("[PVO] Locked target: " .. tostring(pvoState.lockedId or "none"))
   else
-    say("Usage: pvo lock <id> | pvo unlock | pvo fire | pvo status")
+    say("Usage: pvo lock <id> | pvo unlock | pvo radar <name> | pvo fire | pvo status")
   end
 end
+
 -- ====================================================================
 
 local function runLine(line)
