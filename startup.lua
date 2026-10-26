@@ -752,6 +752,115 @@ local function cmdStatus()
   say("Test push: " .. (ok and "OK (connected)" or ("ERROR: " .. tostring(err))))
 end
 
+
+-- =================== PVO (Air Defense) Integration ===================
+local pvoState = {
+  lockedId = nil,
+  target = nil,
+  isAimed = false,
+  lastFire = 0
+}
+
+local function autoDetectPvoGuns()
+  local pitchCtrl, yawCtrl, fireCtrl = nil, nil, nil
+  for _, name in ipairs(peripheral.getNames()) do
+    local p = peripheral.wrap(name)
+    local pType = tostring(peripheral.getType(name) or ""):lower()
+    local nLower = name:lower()
+    if not pitchCtrl and p and p.setAngle and (pType:find("pitch") or nLower:find("pitch")) then
+      pitchCtrl = p
+    end
+    if not yawCtrl and p and p.setAngle and (pType:find("yaw") or nLower:find("yaw")) then
+      yawCtrl = p
+    end
+    if not fireCtrl and p and (p.fireOn or p.keepFiring or pType:find("fire") or nLower:find("fire")) then
+      fireCtrl = p
+    end
+  end
+  return pitchCtrl, yawCtrl, fireCtrl
+end
+
+local function calculateLeadPvo(gunPos, targetPos, targetVel, muzzleVel, gravity)
+  local pred = { x = targetPos.x, y = targetPos.y, z = targetPos.z }
+  local tof = 0
+  for _ = 1, 5 do
+    local dx = pred.x - gunPos.x
+    local dy = pred.y - gunPos.y
+    local dz = pred.z - gunPos.z
+    local dist = math.sqrt(dx*dx + dy*dy + dz*dz)
+    tof = dist / muzzleVel
+    pred.x = targetPos.x + targetVel.x * tof
+    pred.y = targetPos.y + targetVel.y * tof
+    pred.z = targetPos.z + targetVel.z * tof
+  end
+  local dropComp = 0.5 * gravity * (tof * tof)
+  local toY = (pred.y + dropComp) - gunPos.y
+  local toH = math.sqrt((pred.x - gunPos.x)^2 + (pred.z - gunPos.z)^2)
+  local targetYaw = math.deg(math.atan2(-(pred.x - gunPos.x), pred.z - gunPos.z))
+  local targetPitch = math.deg(math.atan2(toY, toH))
+  return targetYaw, targetPitch, tof
+end
+
+local function pvoLoop()
+  while true do
+    if pvoState.lockedId then
+      local pitchCtrl, yawCtrl, _ = autoDetectPvoGuns()
+      local allTracks = getAllTracks()
+      local found = nil
+      for _, tr in ipairs(allTracks) do
+        if tostring(tr.id) == tostring(pvoState.lockedId) then
+          found = tr
+          break
+        end
+      end
+      if found and data.radar then
+        local pos = found.position or { x = 0, y = 0, z = 0 }
+        local vel = found.velocity or { x = 0, y = 0, z = 0 }
+        local yaw, pitch, tof = calculateLeadPvo(data.radar, pos, vel, 60.0, 1.0)
+        if yawCtrl and yawCtrl.setAngle then yawCtrl.setAngle(yaw) end
+        if pitchCtrl and pitchCtrl.setAngle then pitchCtrl.setAngle(pitch) end
+      else
+        pvoState.target = nil
+      end
+    end
+    sleep(0.05)
+  end
+end
+
+local function cmdPvo(arg)
+  local sub, rest = (arg or ""):match("^(%S+)%s*(.-)$")
+  sub = (sub or ""):lower()
+  if sub == "lock" then
+    pvoState.lockedId = rest
+    say("[PVO] Locked on target ID: " .. tostring(rest))
+  elseif sub == "unlock" then
+    pvoState.lockedId = nil
+    pvoState.target = nil
+    local pitchCtrl, yawCtrl, _ = autoDetectPvoGuns()
+    if pitchCtrl and pitchCtrl.stopAuto then pitchCtrl.stopAuto() end
+    if yawCtrl and yawCtrl.stopAuto then yawCtrl.stopAuto() end
+    say("[PVO] Target unlocked. Gun standing by.")
+  elseif sub == "fire" then
+    local _, _, fireCtrl = autoDetectPvoGuns()
+    if fireCtrl and fireCtrl.fireOn then
+      fireCtrl.fireOn()
+      sleep(0.1)
+      fireCtrl.fireOff()
+      say("[PVO] >> FIRE EXECUTED BY OPERATOR <<")
+    else
+      redstone.setOutput("back", true)
+      sleep(0.1)
+      redstone.setOutput("back", false)
+      say("[PVO] >> PULSED REDSTONE FIRE <<")
+    end
+  elseif sub == "status" then
+    say("[PVO] Locked target: " .. tostring(pvoState.lockedId or "none"))
+  else
+    say("Usage: pvo lock <id> | pvo unlock | pvo fire | pvo status")
+  end
+end
+-- ====================================================================
+
 local function runLine(line)
   local cmd, arg = line:match("^(%S+)%s*(.-)$")
   if cmd == "add" then cmdAdd(arg)
@@ -801,6 +910,7 @@ local function runLine(line)
     data.cooldown = tonumber(arg) or data.cooldown
     save()
     say("Cooldown: " .. data.cooldown)
+  elseif cmd == "pvo" then cmdPvo(arg)
   elseif cmd == "help" then help()
   elseif cmd then say("Unknown command, type help") end
 end
@@ -831,4 +941,4 @@ local function cmdLoop()
   end
 end
 
-parallel.waitForAny(guardLoop, cmdLoop, siteLoop)
+parallel.waitForAny(guardLoop, cmdLoop, siteLoop, pvoLoop)

@@ -14,6 +14,353 @@ if (window.top !== window.self) {
   document.documentElement.style.display = "none";
   throw new Error("framed");
 }
+
+// ===================================================================
+// PVO / Heavy Air Defense Tactical Radar & Fire Control Tab
+// ===================================================================
+let pvoSelectedId = null;
+let pvoLockedId = null;
+let pvoAnimId = null;
+
+function initPvoTab() {
+  const canvas = $("pvoCanvas");
+  if (!canvas) return;
+
+  function resizeCanvas() {
+    const rect = canvas.parentElement.getBoundingClientRect();
+    if (rect.width && rect.height) {
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+    }
+  }
+  window.addEventListener("resize", resizeCanvas);
+  resizeCanvas();
+
+  // Safety Toggle listener
+  const safety = $("pvoSafetyToggle");
+  const fireBtn = $("pvoBtnFire");
+  if (safety && fireBtn) {
+    safety.onchange = () => {
+      if (safety.checked) {
+        fireBtn.disabled = false;
+        fireBtn.classList.add("armed");
+      } else {
+        fireBtn.disabled = true;
+        fireBtn.classList.remove("armed");
+      }
+    };
+
+    fireBtn.onclick = () => {
+      if (!safety.checked) return;
+      cSend("pvo fire");
+      // Visual blast feedback
+      fireBtn.style.transform = "scale(0.96)";
+      setTimeout(() => (fireBtn.style.transform = "none"), 120);
+    };
+  }
+
+  // Lock and Unlock buttons
+  if ($("pvoBtnLock")) {
+    $("pvoBtnLock").onclick = () => {
+      if (pvoSelectedId) {
+        pvoLockedId = pvoSelectedId;
+        cSend("pvo lock " + pvoSelectedId);
+      }
+    };
+  }
+  if ($("pvoBtnUnlock")) {
+    $("pvoBtnUnlock").onclick = () => {
+      pvoLockedId = null;
+      cSend("pvo unlock");
+    };
+  }
+
+  // Click on canvas to select contact
+  canvas.onclick = (e) => {
+    const rect = canvas.getBoundingClientRect();
+    const cx = rect.width / 2;
+    const cy = rect.height / 2;
+    const mx = e.clientX - rect.left - cx;
+    const my = e.clientY - rect.top - cy;
+
+    const radarPos = (state && state.radar) || { x: 0, z: 0 };
+    const maxRange = 300;
+    const radius = Math.min(cx, cy) - 20;
+
+    const all = getPvoContacts();
+    let best = null, bestDist = 20; // 20px hit tolerance
+
+    for (const c of all) {
+      const dx = (c.x - radarPos.x);
+      const dz = (c.z - radarPos.z);
+      const px = (dx / maxRange) * radius;
+      const py = (dz / maxRange) * radius;
+      const d = Math.hypot(mx - px, my - py);
+      if (d < bestDist) {
+        bestDist = d;
+        best = c;
+      }
+    }
+    if (best) {
+      pvoSelectedId = best.id;
+      renderPvo();
+    }
+  };
+}
+
+function getPvoContacts() {
+  const res = [];
+  const radarPos = (state && state.radar) || { x: 0, y: 70, z: 0 };
+  const showAir = $("pvoFltAir") ? $("pvoFltAir").checked : true;
+  const showPlayers = $("pvoFltPlayers") ? $("pvoFltPlayers").checked : true;
+
+  if (showPlayers && Array.isArray(state.players)) {
+    for (const p of state.players) {
+      const dx = p.x - radarPos.x, dy = p.y - radarPos.y, dz = p.z - radarPos.z;
+      const dist = Math.hypot(dx, dy, dz);
+      res.push({
+        id: p.id,
+        name: p.name || nickCache[p.id] || "Игрок",
+        type: "player",
+        x: p.x, y: p.y, z: p.z,
+        vx: p.vx || 0, vy: p.vy || 0, vz: p.vz || 0,
+        dist
+      });
+    }
+  }
+
+  if (showAir && Array.isArray(state.objects)) {
+    for (const o of state.objects) {
+      if (isGlueObject(o)) continue;
+      const dx = o.x - radarPos.x, dy = o.y - radarPos.y, dz = o.z - radarPos.z;
+      const dist = Math.hypot(dx, dy, dz);
+      res.push({
+        id: o.id,
+        name: o.name || o.entityType || "Воздушное судно",
+        type: "air",
+        x: o.x, y: o.y, z: o.z,
+        vx: o.vx || 0, vy: o.vy || 0, vz: o.vz || 0,
+        dist
+      });
+    }
+  }
+
+  res.sort((a, b) => a.dist - b.dist);
+  return res;
+}
+
+function renderPvo() {
+  const canvas = $("pvoCanvas");
+  if (!canvas || !$("pvoTab") || !$("pvoTab").classList.contains("on")) return;
+
+  const ctx = canvas.getContext("2d");
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const cx = w / 2, cy = h / 2;
+  const maxRange = 300;
+  const radius = Math.min(cx, cy) - 25;
+  const radarPos = (state && state.radar) || { x: 0, y: 70, z: 0 };
+
+  // Draw Range Rings
+  ctx.strokeStyle = "rgba(46, 213, 115, 0.2)";
+  ctx.lineWidth = 1;
+  const rings = [50, 100, 150, 200, 250, 300];
+  for (const r of rings) {
+    const pr = (r / maxRange) * radius;
+    ctx.beginPath();
+    ctx.arc(cx, cy, pr, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "rgba(46, 213, 115, 0.5)";
+    ctx.font = "10px monospace";
+    ctx.fillText(r + "m", cx + pr + 2, cy - 2);
+  }
+
+  // Cross axes
+  ctx.beginPath();
+  ctx.moveTo(cx, cy - radius); ctx.lineTo(cx, cy + radius);
+  ctx.moveTo(cx - radius, cy); ctx.lineTo(cx + radius, cy);
+  ctx.strokeStyle = "rgba(46, 213, 115, 0.25)";
+  ctx.stroke();
+
+  // Compass Labels
+  ctx.fillStyle = "#2ed573";
+  ctx.font = "bold 11px monospace";
+  ctx.fillText("N (Z-)", cx - 18, cy - radius - 6);
+  ctx.fillText("S (Z+)", cx - 18, cy + radius + 15);
+  ctx.fillText("E (X+)", cx + radius + 4, cy + 4);
+  ctx.fillText("W (X-)", cx - radius - 38, cy + 4);
+
+  // Center Battery Icon
+  ctx.fillStyle = "#ff4757";
+  ctx.beginPath();
+  ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+  ctx.fill();
+
+  const contacts = getPvoContacts();
+  if ($("pvoTargetCount")) $("pvoTargetCount").textContent = contacts.length + " контактов";
+
+  // Update Left List
+  const list = $("pvoTargetList");
+  if (list) {
+    list.innerHTML = "";
+    if (contacts.length === 0) {
+      list.innerHTML = '<div class="empty" style="text-align:center; padding:20px; color:var(--muted)">Контактов в радиусе 300м нет</div>';
+    } else {
+      for (const c of contacts) {
+        const card = document.createElement("div");
+        card.className = "pvo-card" + (c.id === pvoSelectedId ? " selected" : "");
+        const speed = Math.hypot(c.vx, c.vy, c.vz) * 20; // blocks per sec
+        card.innerHTML = `
+          <div class="pvo-card-hdr">
+            <span>${c.name}</span>
+            <span class="pvo-badge ${c.type}">${c.type === "player" ? "Игрок" : "Судно"}</span>
+          </div>
+          <div class="pvo-card-sub">
+            <span>Дист: ${Math.round(c.dist)}м</span>
+            <span>Скор: ${speed.toFixed(1)} б/с</span>
+            <span>Y: ${Math.round(c.y)}</span>
+          </div>
+        `;
+        card.onclick = () => {
+          pvoSelectedId = c.id;
+          renderPvo();
+        };
+        list.appendChild(card);
+      }
+    }
+  }
+
+  // Draw Contacts on Radar Canvas
+  let selectedContact = null;
+  for (const c of contacts) {
+    const dx = c.x - radarPos.x;
+    const dz = c.z - radarPos.z;
+    const px = cx + (dx / maxRange) * radius;
+    const py = cy + (dz / maxRange) * radius;
+
+    const isSel = c.id === pvoSelectedId;
+    const isLock = c.id === pvoLockedId;
+    if (isSel) selectedContact = c;
+
+    // Contact Dot
+    ctx.fillStyle = isLock ? "#ff4757" : (isSel ? "#ffa502" : (c.type === "player" ? "#1e90ff" : "#2ed573"));
+    ctx.beginPath();
+    ctx.arc(px, py, isSel ? 6 : 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Velocity Vector
+    const speed = Math.hypot(c.vx, c.vz) * 20;
+    if (speed > 0.5) {
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.6)";
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(px, py);
+      ctx.lineTo(px + c.vx * 30, py + c.vz * 30);
+      ctx.stroke();
+    }
+
+    // Label
+    ctx.fillStyle = "#fff";
+    ctx.font = "10px monospace";
+    ctx.fillText(c.name, px + 8, py - 4);
+
+    // Target Selection Reticle
+    if (isSel || isLock) {
+      ctx.strokeStyle = isLock ? "#ff4757" : "#ffa502";
+      ctx.lineWidth = 1.5;
+      ctx.strokeRect(px - 10, py - 10, 20, 20);
+    }
+  }
+
+  // Update Right Panel Telemetry
+  if (selectedContact) {
+    const sc = selectedContact;
+    const vSpeed = Math.hypot(sc.vx, sc.vy, sc.vz) * 20;
+    const muzzleVel = 60.0;
+    const gravity = 1.0;
+    const tof = sc.dist / muzzleVel;
+
+    // Ballistic Aim Angles
+    const predX = sc.x + (sc.vx * 20) * tof;
+    const predY = sc.y + (sc.vy * 20) * tof + 0.5 * gravity * tof * tof;
+    const predZ = sc.z + (sc.vz * 20) * tof;
+
+    const toX = -(predX - radarPos.x);
+    const toZ = predZ - radarPos.z;
+    const hDist = Math.hypot(predX - radarPos.x, predZ - radarPos.z);
+    const toY = predY - radarPos.y;
+
+    const yaw = (Math.atan2(toX, toZ) * 180 / Math.PI).toFixed(1);
+    const pitch = (Math.atan2(toY, hDist) * 180 / Math.PI).toFixed(1);
+
+    if ($("pvoSelId")) $("pvoSelId").textContent = sc.name;
+    if ($("pvoSelDist")) $("pvoSelDist").textContent = Math.round(sc.dist) + " м";
+    if ($("pvoSelSpeed")) $("pvoSelSpeed").textContent = vSpeed.toFixed(1) + " б/с";
+    if ($("pvoSelAlt")) $("pvoSelAlt").textContent = "Y=" + Math.round(sc.y);
+    if ($("pvoAimYaw")) $("pvoAimYaw").textContent = yaw + "°";
+    if ($("pvoAimPitch")) $("pvoAimPitch").textContent = pitch + "°";
+    if ($("pvoAimTof")) $("pvoAimTof").textContent = tof.toFixed(2) + " с";
+
+    if ($("pvoAimStatus")) {
+      if (sc.id === pvoLockedId) {
+        $("pvoAimStatus").textContent = "🎯 В ПРИЦЕЛЕ";
+        $("pvoAimStatus").style.color = "#ff4757";
+      } else {
+        $("pvoAimStatus").textContent = "ВЫБРАН (НЕ ЗАХВАЧЕН)";
+        $("pvoAimStatus").style.color = "#ffa502";
+      }
+    }
+
+    // Draw Lead Intercept Point on Canvas
+    const ldx = predX - radarPos.x;
+    const ldz = predZ - radarPos.z;
+    const lpx = cx + (ldx / maxRange) * radius;
+    const lpy = cy + (ldz / maxRange) * radius;
+
+    // Dashed lead line
+    ctx.strokeStyle = "rgba(255, 71, 87, 0.7)";
+    ctx.setLineDash([4, 4]);
+    ctx.beginPath();
+    ctx.moveTo(cx + ((sc.x - radarPos.x) / maxRange) * radius, cy + ((sc.z - radarPos.z) / maxRange) * radius);
+    ctx.lineTo(lpx, lpy);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Lead Reticle (Crosshair)
+    ctx.strokeStyle = "#ff4757";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(lpx, lpy, 8, 0, Math.PI * 2);
+    ctx.moveTo(lpx - 12, lpy); ctx.lineTo(lpx + 12, lpy);
+    ctx.moveTo(lpx, lpy - 12); ctx.lineTo(lpx, lpy + 12);
+    ctx.stroke();
+    ctx.fillStyle = "#ff4757";
+    ctx.font = "bold 10px monospace";
+    ctx.fillText("УПРЕЖДЕНИЕ", lpx + 10, lpy + 10);
+  } else {
+    if ($("pvoSelId")) $("pvoSelId").textContent = "—";
+    if ($("pvoSelDist")) $("pvoSelDist").textContent = "—";
+    if ($("pvoSelSpeed")) $("pvoSelSpeed").textContent = "—";
+    if ($("pvoSelAlt")) $("pvoSelAlt").textContent = "—";
+    if ($("pvoAimYaw")) $("pvoAimYaw").textContent = "—";
+    if ($("pvoAimPitch")) $("pvoAimPitch").textContent = "—";
+    if ($("pvoAimTof")) $("pvoAimTof").textContent = "—";
+    if ($("pvoAimStatus")) {
+      $("pvoAimStatus").textContent = "ОЖИДАНИЕ";
+      $("pvoAimStatus").style.color = "#a4b0be";
+    }
+  }
+}
+
+// Automatically refresh PVO view when new data arrives
+const originalUpdate = window.update || function() {};
+setInterval(() => {
+  if ($("pvoTab") && $("pvoTab").classList.contains("on")) {
+    renderPvo();
+  }
+}, 300);
+
 </script>
 <style>
   :root {
@@ -343,12 +690,97 @@ if (window.top !== window.self) {
     header { grid-column: 1; }
     aside { border-right: 0; border-bottom: 1px solid var(--line); }
   }
+
+  /* ---- PVO / Heavy Air Defense Tab ---- */
+  #pvoTab {
+    position: fixed; left: 0; right: 0; bottom: 0; top: 45px; z-index: 20;
+    background: var(--bg); display: none; flex-direction: row; gap: 14px; padding: 14px 18px;
+    box-sizing: border-box; overflow: hidden;
+  }
+  #pvoTab.on { display: flex; }
+
+  .pvo-col {
+    display: flex; flex-direction: column; gap: 10px; background: var(--panel);
+    border: 1px solid var(--line); border-radius: 8px; padding: 14px; box-sizing: border-box;
+  }
+  .pvo-targets { width: 340px; min-width: 300px; }
+  .pvo-tactical { flex: 1; min-width: 380px; position: relative; overflow: hidden; }
+  .pvo-firectrl { width: 340px; min-width: 300px; }
+
+  .pvo-title {
+    font-size: 15px; font-weight: bold; color: var(--ink); border-bottom: 1px solid var(--line);
+    padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center;
+  }
+  .pvo-list {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-top: 6px;
+  }
+  .pvo-card {
+    background: color-mix(in srgb, var(--bg) 60%, transparent); border: 1px solid var(--line);
+    border-radius: 6px; padding: 10px; cursor: pointer; transition: all 0.15s;
+  }
+  .pvo-card:hover { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+  .pvo-card.selected {
+    border-color: #ff4757; background: rgba(255, 71, 87, 0.15); box-shadow: 0 0 10px rgba(255, 71, 87, 0.3);
+  }
+  .pvo-card-hdr { display: flex; justify-content: space-between; font-weight: bold; font-size: 13px; }
+  .pvo-card-sub { font-size: 12px; color: var(--muted); margin-top: 4px; display: flex; justify-content: space-between; }
+  .pvo-badge {
+    font-size: 10px; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.1); text-transform: uppercase;
+  }
+  .pvo-badge.air { background: #2ed573; color: #000; font-weight: bold; }
+  .pvo-badge.player { background: #1e90ff; color: #fff; font-weight: bold; }
+
+  #pvoCanvas {
+    width: 100%; height: 100%; background: #0c120f; border-radius: 6px; border: 1px solid #1a2920;
+    cursor: crosshair; display: block;
+  }
+  .pvo-canvas-overlay {
+    position: absolute; top: 12px; left: 14px; pointer-events: none; font-size: 12px; color: #2ed573;
+    font-family: monospace; line-height: 1.4; text-shadow: 0 1px 3px #000;
+  }
+
+  .pvo-telemetry {
+    background: color-mix(in srgb, var(--bg) 70%, transparent); border: 1px solid var(--line);
+    border-radius: 6px; padding: 12px; font-family: monospace; font-size: 13px; line-height: 1.6;
+  }
+  .pvo-row { display: flex; justify-content: space-between; }
+  .pvo-row span:last-child { font-weight: bold; color: var(--ink); }
+
+  .pvo-btn {
+    font: inherit; font-size: 14px; font-weight: bold; padding: 10px 14px; border-radius: 6px;
+    border: 1px solid var(--line); cursor: pointer; transition: all 0.2s; text-align: center;
+  }
+  .pvo-btn-lock { background: #3742fa; color: #fff; border-color: #3742fa; }
+  .pvo-btn-lock:hover { background: #5352ed; }
+  .pvo-btn-unlock { background: var(--panel); color: var(--ink); border-color: var(--line); }
+  .pvo-btn-unlock:hover { background: color-mix(in srgb, var(--line) 40%, transparent); }
+
+  .pvo-safety-box {
+    background: rgba(255, 71, 87, 0.1); border: 1px solid #ff4757; border-radius: 6px; padding: 10px;
+    display: flex; align-items: center; gap: 10px; font-size: 13px; font-weight: bold; color: #ff6b81;
+  }
+  .pvo-safety-box input { width: 18px; height: 18px; cursor: pointer; }
+
+  .pvo-btn-fire {
+    background: #57606f; color: #a4b0be; border-color: #57606f; font-size: 16px; padding: 16px;
+    cursor: not-allowed; text-transform: uppercase; letter-spacing: 1px;
+  }
+  .pvo-btn-fire.armed {
+    background: #ff4757; color: #fff; border-color: #ff4757; cursor: pointer;
+    box-shadow: 0 0 16px rgba(255, 71, 87, 0.6); animation: pulseFire 1.5s infinite;
+  }
+  @keyframes pulseFire {
+    0% { box-shadow: 0 0 10px rgba(255, 71, 87, 0.5); }
+    50% { box-shadow: 0 0 24px rgba(255, 71, 87, 0.9); }
+    100% { box-shadow: 0 0 10px rgba(255, 71, 87, 0.5); }
+  }
+
 </style>
 </head>
 <body>
 <header>
   <h1>Радар базы</h1>
-  <nav id="tabs"><button class="tab on" data-t="radar">Радар</button><button class="tab" data-t="console">Консоль</button></nav>
+  <nav id="tabs"><button class="tab on" data-t="radar">Радар</button><button class="tab" data-t="pvo">ПВО / Орудие</button><button class="tab" data-t="console">Консоль</button></nav>
   <button type="button" class="tab" id="headerPip" title="Открыть плавающее окно поверх всех окон (Chrome PiP)">📺 Поверх игры (PiP)</button>
   <button type="button" class="tab" id="headerPop" title="Открыть сайт в отдельном компактном окне">🪟 Окно сайта</button>
   <div id="radarThemeWrap">
@@ -474,6 +906,82 @@ if (window.top !== window.self) {
   </div>
   <canvas id="radar"></canvas>
 </main>
+
+
+<section id="pvoTab">
+  <!-- 1. Targets List -->
+  <div class="pvo-col pvo-targets">
+    <div class="pvo-title">
+      <span>🎯 Воздушные цели</span>
+      <span id="pvoTargetCount" style="font-size:12px; color:var(--muted)">0 контактов</span>
+    </div>
+    <div style="display:flex; gap:6px; font-size:12px; margin-top:4px;">
+      <label><input type="checkbox" id="pvoFltAir" checked> Корабли/Суда</label>
+      <label><input type="checkbox" id="pvoFltPlayers" checked> Игроки</label>
+    </div>
+    <div class="pvo-list" id="pvoTargetList">
+      <div class="empty" style="text-align:center; padding:20px; color:var(--muted)">Сканирование сектора радаром...</div>
+    </div>
+  </div>
+
+  <!-- 2. Tactical Map Canvas -->
+  <div class="pvo-col pvo-tactical">
+    <div class="pvo-title">
+      <span>🌐 Тактический планшет наведения (CBC Radar)</span>
+      <span style="font-size:12px; color:var(--muted)">Масштаб: <span id="pvoScaleLabel">300</span>м</span>
+    </div>
+    <div style="flex:1; position:relative; min-height:0; margin-top:8px;">
+      <canvas id="pvoCanvas"></canvas>
+      <div class="pvo-canvas-overlay" id="pvoOverlay">
+        GRID: 50m / RING<br>
+        BATTERY: READY<br>
+        STATUS: STANDBY
+      </div>
+    </div>
+  </div>
+
+  <!-- 3. Fire Control Panel -->
+  <div class="pvo-col pvo-firectrl">
+    <div class="pvo-title">
+      <span>🛡️ Управление огнем</span>
+      <span id="pvoAimStatus" style="font-size:12px; color:#a4b0be">ОЖИДАНИЕ</span>
+    </div>
+
+    <!-- Telemetry -->
+    <div class="pvo-telemetry">
+      <div class="pvo-row"><span>Цель ID:</span><span id="pvoSelId">—</span></div>
+      <div class="pvo-row"><span>Дистанция:</span><span id="pvoSelDist">—</span></div>
+      <div class="pvo-row"><span>Скорость цели:</span><span id="pvoSelSpeed">—</span></div>
+      <div class="pvo-row"><span>Высота (Y):</span><span id="pvoSelAlt">—</span></div>
+      <div style="border-top:1px dashed var(--line); margin:6px 0;"></div>
+      <div class="pvo-row"><span>Горизонт (Yaw):</span><span id="pvoAimYaw">—</span></div>
+      <div class="pvo-row"><span>Возвышение (Pitch):</span><span id="pvoAimPitch">—</span></div>
+      <div class="pvo-row"><span>Время подлета (ToF):</span><span id="pvoAimTof">—</span></div>
+    </div>
+
+    <!-- Actions -->
+    <div style="display:flex; gap:8px;">
+      <button class="pvo-btn pvo-btn-lock" id="pvoBtnLock" style="flex:1;">🎯 ЗАХВАТ</button>
+      <button class="pvo-btn pvo-btn-unlock" id="pvoBtnUnlock" style="flex:1;">🛑 СБРОС</button>
+    </div>
+
+    <!-- Safety Lock Switch -->
+    <div class="pvo-safety-box">
+      <input type="checkbox" id="pvoSafetyToggle">
+      <label for="pvoSafetyToggle" style="cursor:pointer; flex:1;">
+        РАЗРЕШЕНИЕ ОГНЯ<br>
+        <span style="font-size:11px; font-weight:normal; color:var(--muted)">Снять предохранитель орудия</span>
+      </label>
+    </div>
+
+    <!-- Big Fire Button -->
+    <button class="pvo-btn pvo-btn-fire" id="pvoBtnFire" disabled>💥 ПРОИЗВЕСТИ ЗАЛП</button>
+
+    <div style="font-size:11px; color:var(--muted); text-align:center; line-height:1.4;">
+      ⚠️ Орудие стреляет ТОЛЬКО при нажатии кнопки "ПРОИЗВЕСТИ ЗАЛП" и снятом предохранителе.
+    </div>
+  </div>
+</section>
 
 <section id="console">
   <div id="cquick">
