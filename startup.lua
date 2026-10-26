@@ -333,7 +333,7 @@ local function pushSite()
   if data.radar then
     rd = { x = data.radar.x, y = data.radar.y, z = data.radar.z, range = radarRange() or 0 }
   end
-  local body = textutils.serializeJSON({ players = list, objects = objs, radar = rd, results = pendingResults })
+  local body = textutils.serializeJSON({ players = list, objects = objs, radar = rd, guns = getGunsList(), results = pendingResults })
   local ok, err = http.post(url, body, { ["Content-Type"] = "application/json" })
   if ok then
     local text = nil
@@ -761,29 +761,58 @@ local pvoState = {
   lastFire = 0
 }
 
+
 local function autoDetectPvoGuns()
-  local pitchCtrl, yawCtrl, fireCtrl = nil, nil, nil
+  local guns = {}
+  local pCtrl, yCtrl, fCtrl = nil, nil, nil
   for _, name in ipairs(peripheral.getNames()) do
     local p = peripheral.wrap(name)
     local pType = tostring(peripheral.getType(name) or ""):lower()
     local nLower = name:lower()
-    if not pitchCtrl and p and p.setAngle and (pType:find("pitch") or nLower:find("pitch")) then
-      pitchCtrl = p
+    if not pCtrl and p and p.setAngle and (pType:find("pitch") or nLower:find("pitch")) then
+      pCtrl = p
     end
-    if not yawCtrl and p and p.setAngle and (pType:find("yaw") or nLower:find("yaw")) then
-      yawCtrl = p
+    if not yCtrl and p and p.setAngle and (pType:find("yaw") or nLower:find("yaw")) then
+      yCtrl = p
     end
-    if not fireCtrl and p and (p.fireOn or p.keepFiring or pType:find("fire") or nLower:find("fire")) then
-      fireCtrl = p
+    if not fCtrl and p and (p.fireOn or p.keepFiring or pType:find("fire") or nLower:find("fire")) then
+      fCtrl = p
     end
   end
-  return pitchCtrl, yawCtrl, fireCtrl
+  return pCtrl, yCtrl, fCtrl
 end
+
+local function getGunsList()
+  local list = {}
+  local pCtrl, yCtrl, fCtrl = autoDetectPvoGuns()
+  if pCtrl or yCtrl or fCtrl then
+    local curP = (pCtrl and pCtrl.getAngle and pCtrl.getAngle()) or 0
+    local curY = (yCtrl and yCtrl.getAngle and yCtrl.getAngle()) or 0
+    local gx = (data.radar and data.radar.x) or 0
+    local gy = (data.radar and data.radar.y) or 70
+    local gz = (data.radar and data.radar.z) or 0
+    table.insert(list, {
+      id = "gun_main",
+      name = "Орудие ПВО #1 (CBC)",
+      x = gx, y = gy, z = gz,
+      pitch = curP,
+      yaw = curY,
+      lockedId = pvoState and pvoState.lockedId or nil,
+      status = (pvoState and pvoState.lockedId) and "LOCKED" or "READY"
+    })
+  end
+  return list
+end
+
+
 
 local function calculateLeadPvo(gunPos, targetPos, targetVel, muzzleVel, gravity)
   local pred = { x = targetPos.x, y = targetPos.y, z = targetPos.z }
   local tof = 0
-  for _ = 1, 5 do
+  muzzleVel = muzzleVel or 70.0
+  gravity = gravity or 1.25
+
+  for _ = 1, 6 do
     local dx = pred.x - gunPos.x
     local dy = pred.y - gunPos.y
     local dz = pred.z - gunPos.z
@@ -793,13 +822,16 @@ local function calculateLeadPvo(gunPos, targetPos, targetVel, muzzleVel, gravity
     pred.y = targetPos.y + targetVel.y * tof
     pred.z = targetPos.z + targetVel.z * tof
   end
+
   local dropComp = 0.5 * gravity * (tof * tof)
-  local toY = (pred.y + dropComp) - gunPos.y
+  local aimY = pred.y + dropComp
+  local toY = aimY - gunPos.y
   local toH = math.sqrt((pred.x - gunPos.x)^2 + (pred.z - gunPos.z)^2)
   local targetYaw = math.deg(math.atan2(-(pred.x - gunPos.x), pred.z - gunPos.z))
   local targetPitch = math.deg(math.atan2(toY, toH))
   return targetYaw, targetPitch, tof
 end
+
 
 local function pvoLoop()
   while true do

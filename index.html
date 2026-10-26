@@ -775,6 +775,24 @@ setInterval(() => {
     100% { box-shadow: 0 0 10px rgba(255, 71, 87, 0.5); }
   }
 
+
+  .gun-map-pin {
+    position: absolute; transform: translate(-50%, -50%); cursor: pointer; z-index: 15;
+    display: flex; flex-direction: column; align-items: center; pointer-events: auto;
+  }
+  .gun-icon {
+    font-size: 22px; filter: drop-shadow(0 2px 6px rgba(0,0,0,0.8)); transition: transform 0.2s;
+  }
+  .gun-map-pin:hover .gun-icon { transform: scale(1.25); }
+  .gun-name {
+    font-size: 11px; font-weight: bold; background: rgba(0,0,0,0.8); color: #ffa502;
+    padding: 2px 6px; border-radius: 4px; border: 1px solid #ffa502; white-space: nowrap; margin-top: 2px;
+  }
+  .pvo-gun-select {
+    background: var(--bg); color: var(--ink); border: 1px solid var(--line); border-radius: 6px;
+    padding: 6px 10px; font: inherit; font-size: 13px; width: 100%; cursor: pointer;
+  }
+
 </style>
 </head>
 <body>
@@ -944,6 +962,14 @@ setInterval(() => {
   <div class="pvo-col pvo-firectrl">
     <div class="pvo-title">
       <span>🛡️ Управление огнем</span>
+    </div>
+    <div style="margin-bottom:6px;">
+      <label style="font-size:12px; color:var(--muted); display:block; margin-bottom:4px;">Выбор орудия на карте:</label>
+      <select class="pvo-gun-select" id="pvoGunSelect">
+        <option value="gun_main">Орудие #1 (x: -1279, y: 72, z: -220)</option>
+      </select>
+    </div>
+    <div style="display:none;"
       <span id="pvoAimStatus" style="font-size:12px; color:#a4b0be">ОЖИДАНИЕ</span>
     </div>
 
@@ -2043,12 +2069,22 @@ async function cSend(line) {
   cPoll(); setTimeout(cPoll, 500); setTimeout(cPoll, 1200);
 }
 function setTab(t) {
-  const on = t === "console";
-  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
-  $("console").classList.toggle("on", on);
-  $("console").style.top = document.querySelector("header").offsetHeight + "px";
+  document.querySelectorAll(".tab[data-t]").forEach((b) => b.classList.toggle("on", b.dataset.t === t));
+  $("console").classList.toggle("on", t === "console");
+  if ($("pvoTab")) $("pvoTab").classList.toggle("on", t === "pvo");
+
+  const hH = document.querySelector("header").offsetHeight + "px";
+  $("console").style.top = hH;
+  if ($("pvoTab")) {
+    $("pvoTab").style.top = hH;
+    if (t === "pvo") {
+      initPvoTab();
+      renderPvo();
+    }
+  }
+
   clearInterval(cTimer);
-  if (on) { cPoll(); cTimer = setInterval(cPoll, 1000); $("cline").focus(); }
+  if (t === "console") { cPoll(); cTimer = setInterval(cPoll, 1000); $("cline").focus(); }
 }
 document.querySelectorAll(".tab[data-t]").forEach((b) => (b.onclick = () => setTab(b.dataset.t)));
 document.querySelectorAll(".qk").forEach((b) => (b.onclick = () => { $("cline").value = b.dataset.c + " "; $("cline").focus(); if (["help", "list", "tracks", "radar", "objects", "size"].includes(b.dataset.c)) { $("cline").value = ""; cSend(b.dataset.c); } }));

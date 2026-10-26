@@ -19,7 +19,8 @@ function checkKey(k) {
 let players = {};      // id -> player
 let trails = {};       // id -> [{x,z}]
 let lastUpdate = 0;
-let objects = [];     // non-player contacts (aircraft, contraptions...)
+let objects = [];
+let guns = [];     // Artillery & AA cannons     // non-player contacts (aircraft, contraptions...)
 let radar = null;     // {x,y,z,range} sent by the computer
 const clients = new Set();
 
@@ -202,6 +203,7 @@ function snapshot() {
     updated: lastUpdate,
     online: lastUpdate > 0 && now - lastUpdate < STALE_MS,
     radar,
+    guns,
     objects,
     players: Object.values(players).map((p) => ({ ...p, trail: trails[p.id] || [] })),
   };
