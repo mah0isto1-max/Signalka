@@ -49,6 +49,7 @@ local radar = peripheral.find("create_radar:radar_bearing")
 assert(radar, "Radar not found: place the computer next to the radar")
 
 local seen = {}
+local getGunsList = function() return {} end
 local function now() return os.epoch("utc") / 1000 end
 
 local function getAllTracks()
@@ -333,7 +334,7 @@ local function pushSite()
   if data.radar then
     rd = { x = data.radar.x, y = data.radar.y, z = data.radar.z, range = radarRange() or 0 }
   end
-  local body = textutils.serializeJSON({ players = list, objects = objs, radar = rd, guns = getGunsList(), results = pendingResults })
+  local body = textutils.serializeJSON({ players = list, objects = objs, radar = rd, guns = (type(getGunsList) == "function" and getGunsList()) or {}, results = pendingResults })
   local ok, err = http.post(url, body, { ["Content-Type"] = "application/json" })
   if ok then
     local text = nil
@@ -824,7 +825,7 @@ local function getGunRadar()
 end
 
 
-local function getGunsList()
+getGunsList = function()
   local list = {}
   local pCtrl, yCtrl, fCtrl = autoDetectPvoGuns()
   local gunR, gunRName = getGunRadar()
