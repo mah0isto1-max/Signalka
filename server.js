@@ -74,6 +74,7 @@ function registerNick(uuidOrNull, nick) {
 
 const pendingLookups = new Set();
 function resolveUuid(rawId) {
+  if (clients.size === 0) return; // Do not waste bandwidth if no user is looking at the dashboard
   if (!rawId || typeof rawId !== "string") return;
   const clean = rawId.replace(/-/g, "").toLowerCase();
   if (clean.length !== 32 || !/^[0-9a-f]{32}$/.test(clean)) return;
@@ -247,6 +248,9 @@ function proxyMap(req, res, upPath) {
       const h = { ...ur.headers };
       delete h["x-frame-options"];
       delete h["content-security-policy"];
+      if (/\.(png|jpe?g|webp|svg|css|js|woff2?|json\.gz|gz|bin)$/i.test(upPath) || upPath.includes("/tiles/")) {
+        h["cache-control"] = "public, max-age=604800, immutable";
+      }
       if (h.location) {
         try {
           const l = new URL(h.location, MAP_ORIGIN);
@@ -528,7 +532,7 @@ const server = http.createServer((req, res) => {
 
 // keep SSE connections alive and mark the feed offline when the computer stops
 setInterval(() => {
-  for (const res of clients) res.write(": ping\n\n");
+  if (clients.size > 0) { for (const res of clients) res.write(": ping\n\n"); }
   if (lastUpdate && Date.now() - lastUpdate > STALE_MS && (Object.keys(players).length || objects.length)) {
     players = {};
     objects = [];
@@ -541,6 +545,7 @@ server.listen(PORT, () => console.log("Guard site on port " + PORT));
 
 // Poll BlueMap's players.json to capture offline/cracked and online player nicknames
 function pollServerPlayers() {
+  if (clients.size === 0) return; // Zero bandwidth when nobody is on the site!
   const req = http.get({
     host: MAP_ORIGIN.hostname,
     port: MAP_ORIGIN.port || 80,

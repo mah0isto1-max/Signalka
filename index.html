@@ -1117,6 +1117,7 @@ async function resolveNick(uuid) {
 
 // Poll BlueMap live server players every 3s to capture offline/cracked players instantly
 async function pollBlueMapClient() {
+  if (document.hidden) return;
   try {
     const res = await fetch("/map/maps/world/live/players.json", { cache: "no-store" });
     if (res.ok) {
@@ -1141,7 +1142,7 @@ async function pollBlueMapClient() {
     }
   } catch (e) {}
 }
-setInterval(pollBlueMapClient, 3000);
+setInterval(pollBlueMapClient, 10000);
 pollBlueMapClient();
 
 // ---- Theming the entire page ----
