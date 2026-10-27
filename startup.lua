@@ -41,8 +41,11 @@ if fs.exists(FILE) then
     data.objfilter = d.objfilter or "auto"
     data.sizes = d.sizes or {}
     data.objcats = d.objcats or {}
+    data.redstoneSide = d.redstoneSide or "top"
   end
 end
+data.redstoneSide = data.redstoneSide or "top"
+pcall(function() redstone.setOutput(data.redstoneSide, false) end)
 
 local radar = peripheral.find("create_radar:radar_bearing")
            or peripheral.find("create_radar:monitor")
@@ -392,9 +395,11 @@ end
 local lastAlert = {}
 local function guardLoop()
   while true do
+    local hasEnemy = false
     for _, t in ipairs(getPlayers()) do
       seen[t.id] = { t = t, time = now() }
       if not data.friends[t.id] then
+        hasEnemy = true
         if not lastAlert[t.id] or now() - lastAlert[t.id] > data.cooldown then
           lastAlert[t.id] = now()
           -- try all sources for the nick before sending alert
@@ -414,6 +419,12 @@ local function guardLoop()
           sendDiscordAlert(pName, t.id, t.position, mapLink(t.position), data.site ~= "" and data.site or nil)
         end
       end
+    end
+    local rSide = data.redstoneSide or "top"
+    if rSide ~= "off" and rSide ~= "none" then
+      pcall(function()
+        redstone.setOutput(rSide, hasEnemy)
+      end)
     end
     sleep(0.5)
   end
@@ -733,6 +744,7 @@ local function help()
   say("site <url> - set website address")
   say("key <secret> - set website secret key")
   say("test - send test message")
+  say("redstone [side|off] - set redstone alarm output side (default: top)")
   say("status - show current settings (site, key, radar, webhook)")
   say("help - show this help")
 end
@@ -746,6 +758,7 @@ local function cmdStatus()
   else
     say("Radar circle: NOT SET (type: radar here OR radar <x> <y> <z>)")
   end
+  say("Redstone alarm: " .. tostring(data.redstoneSide or "top"))
   say("Webhook: " .. (data.webhook ~= "" and "SET" or "NOT SET"))
   local fc = 0 for _ in pairs(data.friends) do fc = fc + 1 end
   say("Friends: " .. fc)
@@ -1015,6 +1028,21 @@ local function runLine(line)
     end
   elseif cmd == "test" then
     say(sendDiscord("Guard test message\n" .. mapLink({ x = 0, y = 70, z = 0 })) and "Sent" or "Not sent")
+  elseif cmd == "redstone" or cmd == "rs" then
+    if arg and arg ~= "" then
+      arg = arg:lower()
+      local valid = { top=true, bottom=true, left=true, right=true, front=true, back=true, off=true, none=true }
+      if valid[arg] then
+        pcall(function() redstone.setOutput(data.redstoneSide or "top", false) end)
+        data.redstoneSide = arg
+        save()
+        if arg == "off" or arg == "none" then say("Redstone alarm: OFF")
+        else say("Redstone alarm side: " .. arg) end
+      else say("Invalid side. Use: top, bottom, left, right, front, back, off") end
+    else
+      say("Current redstone side: " .. tostring(data.redstoneSide or "top"))
+      say("Usage: redstone <top|bottom|left|right|front|back|off>")
+    end
   elseif cmd == "cooldown" then
     data.cooldown = tonumber(arg) or data.cooldown
     save()
